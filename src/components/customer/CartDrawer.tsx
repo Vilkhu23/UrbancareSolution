@@ -13,7 +13,8 @@ import {
   ReceiptText,
   CreditCard,
   IndianRupee,
-  ArrowRight
+  ArrowRight,
+  ShoppingBag
 } from 'lucide-react';
 
 export const CartDrawer: React.FC = () => {
@@ -49,6 +50,50 @@ export const CartDrawer: React.FC = () => {
   }, [currentUser]);
 
   if (!isCartDrawerOpen) return null;
+
+  if (!currentUser) {
+    return (
+      <div className="fixed inset-0 z-50 flex justify-end bg-black/50 backdrop-blur-xs transition-opacity animate-fadeIn">
+        <div className="w-full max-w-md bg-white h-full flex flex-col justify-between shadow-2xl border-l border-[#c0c9c2]/40 p-6 animate-in slide-in-from-right duration-200">
+          <div className="flex items-center justify-between border-b border-[#c0c9c2]/40 pb-4">
+            <div className="flex items-center space-x-2">
+              <ShoppingBag className="w-5 h-5 text-[#003523]" />
+              <h3 className="text-base font-bold text-[#131b2e]">Your Service Basket</h3>
+            </div>
+            <button
+              onClick={() => setIsCartDrawerOpen(false)}
+              className="p-1.5 rounded-lg hover:bg-gray-100 text-gray-500"
+            >
+              <X className="w-5 h-5" />
+            </button>
+          </div>
+
+          <div className="text-center py-10 space-y-4">
+            <div className="w-16 h-16 bg-[#c0edd3] text-[#003523] rounded-2xl flex items-center justify-center mx-auto shadow-inner">
+              <ShoppingBag className="w-8 h-8 text-[#003523]" />
+            </div>
+            <h4 className="text-lg font-bold text-[#131b2e]">Sign In to View Your Basket</h4>
+            <p className="text-xs text-[#707973] max-w-xs mx-auto leading-relaxed">
+              Please log in to your account to view your selected services, track orders, and schedule technician visits.
+            </p>
+            <button
+              onClick={() => {
+                setIsCartDrawerOpen(false);
+                setIsAuthModalOpen(true);
+              }}
+              className="w-full py-3 bg-[#003523] hover:bg-[#144d37] text-white font-bold rounded-xl text-xs transition-all shadow-md"
+            >
+              Sign In / Register
+            </button>
+          </div>
+
+          <p className="text-center text-[11px] text-[#707973]">
+            UrbanCare Solution · Punjab Kharar & Greater Mohali
+          </p>
+        </div>
+      </div>
+    );
+  }
 
   const dateOptions = ['Today', 'Tomorrow', 'Day After'];
   const timeSlotOptions = [

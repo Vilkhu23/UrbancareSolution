@@ -28,7 +28,9 @@ export const ServiceDetailModal: React.FC = () => {
     addToCart,
     setIsCartDrawerOpen,
     setIsCustomTaskModalOpen,
-    showToast
+    showToast,
+    currentUser,
+    setIsAuthModalOpen
   } = useApp();
 
   const [openFaqIndex, setOpenFaqIndex] = useState<number | null>(0);
@@ -43,6 +45,12 @@ export const ServiceDetailModal: React.FC = () => {
   const exclusions = service.excluded_items || service.excluded || [];
 
   const handleBookNow = () => {
+    if (!currentUser) {
+      setSelectedDetailServiceId(null);
+      setIsAuthModalOpen(true);
+      showToast('Please sign in or register to book this service.', 'info');
+      return;
+    }
     addToCart(service, 1);
     setSelectedDetailServiceId(null);
     setIsCartDrawerOpen(true);

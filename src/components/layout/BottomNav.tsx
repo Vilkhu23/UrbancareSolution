@@ -16,7 +16,9 @@ export const BottomNav: React.FC = () => {
     setCurrentRole,
     requests,
     cartTotal,
-    setIsCartDrawerOpen
+    setIsCartDrawerOpen,
+    currentUser,
+    currentRole
   } = useApp();
 
   const pendingRequests = requests.filter(
@@ -65,23 +67,25 @@ export const BottomNav: React.FC = () => {
         <span className="text-[10px]">Projects</span>
       </button>
 
-      {/* Direct Basket button with item count */}
-      <button
-        onClick={() => setIsCartDrawerOpen(true)}
-        className="flex flex-col items-center justify-center min-h-[46px] min-w-[54px] p-1 rounded-xl text-[#003523] relative transition-all"
-      >
-        <div className="relative">
-          <ShoppingBag className="w-5 h-5 mb-0.5" />
-          {cartTotal.itemCount > 0 && (
-            <span className="absolute -top-1.5 -right-2 bg-[#fe932c] text-[#002114] text-[9px] font-bold w-4 h-4 rounded-full flex items-center justify-center shadow-xs">
-              {cartTotal.itemCount}
-            </span>
-          )}
-        </div>
-        <span className="text-[10px] font-bold">
-          {cartTotal.itemCount > 0 ? `₹${cartTotal.total}` : 'Basket'}
-        </span>
-      </button>
+      {/* Direct Basket button with item count - visible strictly once logged in */}
+      {currentUser && currentRole === 'customer' && (
+        <button
+          onClick={() => setIsCartDrawerOpen(true)}
+          className="flex flex-col items-center justify-center min-h-[46px] min-w-[54px] p-1 rounded-xl text-[#003523] relative transition-all"
+        >
+          <div className="relative">
+            <ShoppingBag className="w-5 h-5 mb-0.5" />
+            {cartTotal.itemCount > 0 && (
+              <span className="absolute -top-1.5 -right-2 bg-[#fe932c] text-[#002114] text-[9px] font-bold w-4 h-4 rounded-full flex items-center justify-center shadow-xs">
+                {cartTotal.itemCount}
+              </span>
+            )}
+          </div>
+          <span className="text-[10px] font-bold">
+            {cartTotal.itemCount > 0 ? `₹${cartTotal.total}` : 'Basket'}
+          </span>
+        </button>
+      )}
 
       <button
         onClick={() => setCurrentPage('account')}

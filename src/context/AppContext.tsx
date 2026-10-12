@@ -692,8 +692,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         // fallback
       }
     }
-    // Default to first customer (Amanjot Sandhu) for seamless prototype testing
-    return INITIAL_CUSTOMERS[0] || null;
+    // User must log in; default to null if no saved session
+    return null;
   });
 
   const setCurrentUser = (user: CustomerRecord | null) => {
@@ -1000,6 +1000,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     setCurrentUser(null);
     setCurrentRole('customer');
     setCurrentPage('home');
+    clearCart();
+    setIsCartDrawerOpen(false);
     showToast(prevName ? `Logged out of ${prevName}'s account` : 'Logged out', 'info');
   };
 
@@ -1335,6 +1337,12 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   // Cart operations
   const addToCart = (service: ServiceItem, quantity: number = 1) => {
+    if (!currentUser) {
+      setIsAuthModalOpen(true);
+      showToast('Please sign in or register to add items to your basket.', 'info');
+      return;
+    }
+
     const pType = service.price_type || (service.pricingType?.toString().toUpperCase() as PriceType) || 'FIXED';
     const effectivePrice = service.base_price ?? service.basePrice ?? 0;
     const effectiveVisit = service.visit_fee ?? service.visitFee ?? 99;
@@ -1365,6 +1373,12 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   };
 
   const addPackageToCart = (pkg: ServicePackage) => {
+    if (!currentUser) {
+      setIsAuthModalOpen(true);
+      showToast('Please sign in or register to add packages to your basket.', 'info');
+      return;
+    }
+
     setCart((prev) => {
       const existing = prev.find((item) => item.serviceId === pkg.id);
       if (existing) {

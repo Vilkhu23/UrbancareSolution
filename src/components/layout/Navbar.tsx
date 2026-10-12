@@ -279,22 +279,24 @@ export const Navbar: React.FC = () => {
               </button>
             )}
 
-            {/* Cart Button */}
-            <button
-              onClick={() => setIsCartDrawerOpen(true)}
-              className="relative p-2.5 rounded-xl bg-[#003523] text-white hover:bg-[#144d37] transition-all flex items-center space-x-2 shadow-sm"
-              title="View Cart"
-            >
-              <ShoppingBag className="w-4 h-4" />
-              <span className="hidden sm:inline text-xs font-bold">
-                {cartTotal.itemCount > 0 ? `₹${cartTotal.total}` : 'Basket'}
-              </span>
-              {cartTotal.itemCount > 0 && (
-                <span className="absolute -top-1.5 -right-1.5 bg-[#fe932c] text-[#002114] text-[10px] font-bold w-5 h-5 rounded-full flex items-center justify-center shadow-xs">
-                  {cartTotal.itemCount}
+            {/* Basket Button - Visible strictly once user is logged in */}
+            {currentUser && currentRole === 'customer' && (
+              <button
+                onClick={() => setIsCartDrawerOpen(true)}
+                className="relative p-2.5 rounded-xl bg-[#003523] text-white hover:bg-[#144d37] transition-all flex items-center space-x-2 shadow-sm animate-in fade-in"
+                title="View Basket"
+              >
+                <ShoppingBag className="w-4 h-4" />
+                <span className="hidden sm:inline text-xs font-bold">
+                  {cartTotal.itemCount > 0 ? `₹${cartTotal.total}` : 'Basket'}
                 </span>
-              )}
-            </button>
+                {cartTotal.itemCount > 0 && (
+                  <span className="absolute -top-1.5 -right-1.5 bg-[#fe932c] text-[#002114] text-[10px] font-bold w-5 h-5 rounded-full flex items-center justify-center shadow-xs">
+                    {cartTotal.itemCount}
+                  </span>
+                )}
+              </button>
+            )}
 
             {/* Profile / Login Icon Button */}
             <button
