@@ -1,0 +1,6 @@
+{
+  "name": "PindCare Punjab - Tricity Home Services",
+  "description": "Operations-led local home services and home projects marketplace for Kharar, Mohali, Sunny Enclave, Sector 115 and Landran.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

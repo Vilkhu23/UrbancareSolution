@@ -1,0 +1,289 @@
+{
+  "entities": {
+    "ServiceRequest": {
+      "title": "ServiceRequest",
+      "description": "Represents an on-demand doorstep service booking in Kharar and Mohali",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Unique booking identifier",
+          "maxLength": 128
+        },
+        "customerName": {
+          "type": "string",
+          "description": "Customer full name",
+          "maxLength": 100
+        },
+        "customerPhone": {
+          "type": "string",
+          "description": "Customer contact mobile phone number",
+          "maxLength": 20
+        },
+        "customerEmail": {
+          "type": "string",
+          "description": "Customer optional email address",
+          "maxLength": 100
+        },
+        "locality": {
+          "type": "string",
+          "description": "Neighborhood or sector in Kharar/Mohali",
+          "maxLength": 100
+        },
+        "address": {
+          "type": "string",
+          "description": "Doorstep delivery address",
+          "maxLength": 300
+        },
+        "landmark": {
+          "type": "string",
+          "description": "Optional street landmark",
+          "maxLength": 150
+        },
+        "requestType": {
+          "type": "string",
+          "description": "Classification of booking",
+          "enum": ["STANDARD_SERVICE", "CUSTOM_REQUIREMENT", "HOME_PROJECT"]
+        },
+        "status": {
+          "type": "string",
+          "description": "Operational dispatch lifecycle status",
+          "maxLength": 50
+        },
+        "subtotal": {
+          "type": "number",
+          "description": "Item subtotal before taxes and fees"
+        },
+        "visitFee": {
+          "type": "number",
+          "description": "Base technician dispatch inspection fee"
+        },
+        "total": {
+          "type": "number",
+          "description": "Total final payable amount"
+        },
+        "preferredDate": {
+          "type": "string",
+          "description": "Scheduled date for service",
+          "maxLength": 50
+        },
+        "preferredTimeSlot": {
+          "type": "string",
+          "description": "Scheduled time slot for technician arrival",
+          "maxLength": 50
+        },
+        "notes": {
+          "type": "string",
+          "description": "Customer special instructions",
+          "maxLength": 500
+        },
+        "paymentStatus": {
+          "type": "string",
+          "description": "Payment collection state",
+          "enum": ["PENDING_ON_COMPLETION", "PAID", "DISPUTED"]
+        },
+        "createdAt": {
+          "type": "string",
+          "description": "Timestamp of creation",
+          "maxLength": 50
+        },
+        "updatedAt": {
+          "type": "string",
+          "description": "Timestamp of latest modification",
+          "maxLength": 50
+        }
+      },
+      "required": ["id", "customerName", "customerPhone", "locality", "address", "status", "total"]
+    },
+    "CustomerReview": {
+      "title": "CustomerReview",
+      "description": "Verified post-service rating and feedback for UrbanCare Solution",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Unique review record ID",
+          "maxLength": 128
+        },
+        "requestId": {
+          "type": "string",
+          "description": "Associated booking identifier",
+          "maxLength": 128
+        },
+        "customerName": {
+          "type": "string",
+          "description": "Name of reviewing resident",
+          "maxLength": 100
+        },
+        "locality": {
+          "type": "string",
+          "description": "Sector or residential colony",
+          "maxLength": 100
+        },
+        "serviceName": {
+          "type": "string",
+          "description": "Service delivered",
+          "maxLength": 150
+        },
+        "technicianName": {
+          "type": "string",
+          "description": "Name of assigned technician",
+          "maxLength": 100
+        },
+        "rating": {
+          "type": "number",
+          "description": "Rating score between 1 and 5"
+        },
+        "review": {
+          "type": "string",
+          "description": "Feedback message text",
+          "maxLength": 1000
+        },
+        "timestamp": {
+          "type": "string",
+          "description": "Time of review submission",
+          "maxLength": 50
+        }
+      },
+      "required": ["id", "customerName", "rating", "review"]
+    },
+    "HomeProjectRequest": {
+      "title": "HomeProjectRequest",
+      "description": "Lead and quotation inquiry for home renovation or interior construction",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Unique inquiry ID",
+          "maxLength": 128
+        },
+        "customerName": {
+          "type": "string",
+          "description": "Client full name",
+          "maxLength": 100
+        },
+        "customerPhone": {
+          "type": "string",
+          "description": "Phone number",
+          "maxLength": 20
+        },
+        "locality": {
+          "type": "string",
+          "description": "Property sector or village",
+          "maxLength": 100
+        },
+        "address": {
+          "type": "string",
+          "description": "Site address",
+          "maxLength": 300
+        },
+        "projectType": {
+          "type": "string",
+          "description": "Category of project (e.g. Painting, Waterproofing)",
+          "maxLength": 100
+        },
+        "propertyType": {
+          "type": "string",
+          "description": "Type of property (Villa, Kothi, 3BHK)",
+          "maxLength": 100
+        },
+        "approxAreaSqFt": {
+          "type": "number",
+          "description": "Estimated square footage"
+        },
+        "budgetRange": {
+          "type": "string",
+          "description": "Estimated budget allocation",
+          "maxLength": 100
+        },
+        "description": {
+          "type": "string",
+          "description": "Scope description",
+          "maxLength": 1000
+        },
+        "status": {
+          "type": "string",
+          "description": "Lifecycle review stage",
+          "maxLength": 50
+        },
+        "createdAt": {
+          "type": "string",
+          "description": "Submission time",
+          "maxLength": 50
+        }
+      },
+      "required": ["id", "customerName", "customerPhone", "locality", "projectType", "status"]
+    },
+    "ComplaintRecord": {
+      "title": "ComplaintRecord",
+      "description": "Customer quality or dispatch dispute record",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Dispute ticket ID",
+          "maxLength": 128
+        },
+        "requestId": {
+          "type": "string",
+          "description": "Referenced booking ID",
+          "maxLength": 128
+        },
+        "customerName": {
+          "type": "string",
+          "description": "Complainant name",
+          "maxLength": 100
+        },
+        "customerPhone": {
+          "type": "string",
+          "description": "Complainant phone",
+          "maxLength": 20
+        },
+        "issueType": {
+          "type": "string",
+          "description": "Category of complaint",
+          "maxLength": 50
+        },
+        "description": {
+          "type": "string",
+          "description": "Details of the issue",
+          "maxLength": 1000
+        },
+        "severity": {
+          "type": "string",
+          "description": "Dispute urgency",
+          "maxLength": 20
+        },
+        "status": {
+          "type": "string",
+          "description": "Investigation resolution status",
+          "maxLength": 30
+        },
+        "createdAt": {
+          "type": "string",
+          "description": "Ticket log time",
+          "maxLength": 50
+        }
+      },
+      "required": ["id", "customerName", "customerPhone", "issueType", "description", "status"]
+    }
+  },
+  "firestore": {
+    "/service_requests/{requestId}": {
+      "schema": "ServiceRequest",
+      "description": "Doorstep bookings and emergency requests for Kharar and Mohali"
+    },
+    "/customer_reviews/{reviewId}": {
+      "schema": "CustomerReview",
+      "description": "Public verified reviews and star ratings"
+    },
+    "/home_projects/{projectId}": {
+      "schema": "HomeProjectRequest",
+      "description": "Home project and renovation requests"
+    },
+    "/complaints/{complaintId}": {
+      "schema": "ComplaintRecord",
+      "description": "Customer quality assurance and dispute tickets"
+    }
+  }
+}

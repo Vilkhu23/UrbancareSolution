@@ -1,0 +1,105 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Global Deny All Catch-all
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // Helper functions
+    function isValidId(id) {
+      return id is string && id.size() > 0 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isAdmin() {
+      return isSignedIn() && (
+        request.auth.token.email == 'vilkhu08@gmail.com' ||
+        exists(/databases/$(database)/documents/admins/$(request.auth.uid))
+      );
+    }
+
+    // Entity Validation Helpers
+    function isValidServiceRequest(data) {
+      return data.id is string && data.id.size() <= 128 &&
+             data.customerName is string && data.customerName.size() > 0 && data.customerName.size() <= 100 &&
+             data.customerPhone is string && data.customerPhone.size() > 0 && data.customerPhone.size() <= 20 &&
+             data.locality is string && data.locality.size() <= 100 &&
+             data.address is string && data.address.size() <= 300 &&
+             data.total is number && data.total >= 0;
+    }
+
+    function isValidCustomerReview(data) {
+      return data.id is string && data.id.size() <= 128 &&
+             data.customerName is string && data.customerName.size() > 0 && data.customerName.size() <= 100 &&
+             data.rating is number && data.rating >= 1 && data.rating <= 5 &&
+             data.review is string && data.review.size() > 0 && data.review.size() <= 1000;
+    }
+
+    function isValidHomeProject(data) {
+      return data.id is string && data.id.size() <= 128 &&
+             data.customerName is string && data.customerName.size() > 0 && data.customerName.size() <= 100 &&
+             data.customerPhone is string && data.customerPhone.size() > 0 && data.customerPhone.size() <= 20 &&
+             data.locality is string && data.locality.size() <= 100 &&
+             data.projectType is string && data.projectType.size() <= 100;
+    }
+
+    function isValidComplaint(data) {
+      return data.id is string && data.id.size() <= 128 &&
+             data.customerName is string && data.customerName.size() > 0 && data.customerName.size() <= 100 &&
+             data.customerPhone is string && data.customerPhone.size() > 0 && data.customerPhone.size() <= 20 &&
+             data.issueType is string && data.issueType.size() <= 50 &&
+             data.description is string && data.description.size() <= 1000;
+    }
+
+    // 1. Service Requests & Bookings
+    match /service_requests/{requestId} {
+      allow get: if isValidId(requestId);
+      allow list: if true;
+      allow create: if isValidId(requestId) && isValidServiceRequest(incoming());
+      allow update: if isValidId(requestId) && isValidServiceRequest(incoming()) && (
+        incoming().id == existing().id
+      );
+      allow delete: if isAdmin();
+    }
+
+    // 2. Customer Reviews
+    match /customer_reviews/{reviewId} {
+      allow get: if isValidId(reviewId);
+      allow list: if true;
+      allow create: if isValidId(reviewId) && isValidCustomerReview(incoming());
+      allow update: if isValidId(reviewId) && isValidCustomerReview(incoming()) && incoming().id == existing().id;
+      allow delete: if isAdmin();
+    }
+
+    // 3. Home Project Requests
+    match /home_projects/{projectId} {
+      allow get: if isValidId(projectId);
+      allow list: if true;
+      allow create: if isValidId(projectId) && isValidHomeProject(incoming());
+      allow update: if isValidId(projectId) && isValidHomeProject(incoming()) && incoming().id == existing().id;
+      allow delete: if isAdmin();
+    }
+
+    // 4. Quality Complaints
+    match /complaints/{complaintId} {
+      allow get: if isValidId(complaintId);
+      allow list: if true;
+      allow create: if isValidId(complaintId) && isValidComplaint(incoming());
+      allow update: if isValidId(complaintId) && isValidComplaint(incoming()) && incoming().id == existing().id;
+      allow delete: if isAdmin();
+    }
+  }
+}
