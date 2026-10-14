@@ -1,8 +1,7 @@
 import React, { useState, useMemo } from 'react';
 import { useApp } from '../context/AppContext';
 import { SERVICE_CATEGORIES, SERVICE_AVAILABLE_ZONES } from '../data/initialData';
-import { ViewAllServicesModal } from '../components/customer/ViewAllServicesModal';
-import { formatServicePricing } from '../utils/pricingEngine';
+import { CustomerOtpDisplay } from '../components/customer/CustomerOtpDisplay';
 import {
   Search,
   Wrench,
@@ -12,146 +11,137 @@ import {
   Paintbrush,
   Sparkles,
   ShieldAlert,
-  Heart,
-  Scissors,
-  Home,
-  PlusCircle,
+  HardHat,
   Star,
   ArrowRight,
   ShieldCheck,
-  Plus,
-  Minus,
-  Info,
-  Layers,
-  PhoneCall,
-  Clock,
   Check,
   ChevronDown,
   ChevronUp,
   Tag,
-  Grid,
   MapPin,
-  CheckCircle2,
+  Clock,
+  MessageCircle,
   Phone,
-  HelpCircle
+  CheckCircle2,
+  Calendar,
+  CreditCard,
+  Building2,
+  Receipt,
+  UserCheck
 } from 'lucide-react';
+
+/**
+ * Single source of truth for pricing and ETA policies across the website.
+ * Prevents conflicting promises and ensures transparent customer communication.
+ */
+export const PRICING_CONFIG = {
+  inspectionFee: 149,
+  inspectionFeeRule:
+    'Our doorstep inspection fee is ₹149, completely waived whenever you proceed with the repair.',
+  partsPolicy:
+    'All replacement hardware and spare parts are billed strictly at genuine retail shop MRP with shop receipts.',
+  warrantyDays: 30,
+  warrantyPromise:
+    '30-Day Workmanship Warranty on all completed repairs. Free return visit if any serviced part acts up.',
+  etaStandard: '30 mins',
+  etaDetailed:
+    'Verified local technicians dispatched across Sectors 94–111 (Mohali & Kharar) for ~30-minute doorstep arrival.'
+};
 
 export const HomePage: React.FC = () => {
   const {
     currentLocality,
     setCurrentLocality,
-    setIsLocalityModalOpen,
     services,
-    packages,
-    cart,
     addToCart,
-    addPackageToCart,
-    updateCartQuantity,
-    setSelectedDetailServiceId,
-    setIsCustomTaskModalOpen,
-    setIsProjectModalOpen,
+    cart,
     setCurrentPage,
+    currentUser,
     requests,
     setActiveTrackingRequestId,
     reviews,
-    showToast
+    showToast,
+    isLoadingData,
+    dataLoadError
   } = useApp();
 
+  // Search input state
   const [searchQuery, setSearchQuery] = useState('');
-  const [selectedCategory, setSelectedCategory] = useState<string>('AC & Appliances');
-  const [selectedSubcategory, setSelectedSubcategory] = useState<string>('All');
-  const [catalogMode, setCatalogMode] = useState<'all' | 'services' | 'packages'>('all');
-  const [isViewAllModalOpen, setIsViewAllModalOpen] = useState(false);
+
+  // Sector checker state
+  const [selectedZoneId, setSelectedZoneId] = useState<string>('zone-sec-94');
+  const [pincodeQuery, setPincodeQuery] = useState('');
+
+  // FAQ accordion state
   const [activeFaqIndex, setActiveFaqIndex] = useState<number | null>(0);
 
-  // Quick problem symptom suggestions
-  const searchChips = [
-    'AC not cooling',
-    'Ceiling fan repair',
-    'Water tap leaking',
-    'Bathroom deep cleaning',
-    'Switchboard repair',
-    'Kitchen modular quote',
-    'Water motor repair'
+  // Quick symptom search chips (5 curated high-intent needs)
+  const quickChips = [
+    'AC Service',
+    'Fan Repair',
+    'Tap Leakage',
+    'Switchboard',
+    'Deep Cleaning'
   ];
 
-  // Active category object
-  const activeCategoryObj = useMemo(() => {
-    return (
-      SERVICE_CATEGORIES.find((c) => c.name.toLowerCase() === selectedCategory.toLowerCase()) ||
-      SERVICE_CATEGORIES[0]
+  // Active customer request strictly for logged-in users with active orders
+  const activeOrder = useMemo(() => {
+    if (!currentUser) return null;
+    return requests.find(
+      (r) => r.status !== 'COMPLETED' && r.status !== 'CANCELLED' && r.status !== 'CLOSED'
     );
-  }, [selectedCategory]);
+  }, [currentUser, requests]);
 
-  // Available subcategories for selected category
-  const availableSubcategories = activeCategoryObj.subcategories || [];
+  // Curated 8 categories for the icon grid
+  const mainCategories = useMemo(() => {
+    return SERVICE_CATEGORIES.slice(0, 8);
+  }, []);
 
-  // Filtered services
-  const filteredServices = useMemo(() => {
-    return services.filter((s) => {
-      if (!s.active) return false;
-
-      // Search match
-      const q = searchQuery.toLowerCase().trim();
-      if (q !== '') {
-        const matchesQuery =
-          s.name.toLowerCase().includes(q) ||
-          s.description.toLowerCase().includes(q) ||
-          s.category.toLowerCase().includes(q) ||
-          s.subcategory.toLowerCase().includes(q) ||
-          (s.included && s.included.some((inc) => inc.toLowerCase().includes(q)));
-        if (!matchesQuery) return false;
-      } else {
-        // Category match
-        if (s.category.toLowerCase() !== selectedCategory.toLowerCase()) {
-          return false;
-        }
-        // Subcategory match
-        if (selectedSubcategory !== 'All' && s.subcategory !== selectedSubcategory) {
-          return false;
-        }
-      }
-
-      return true;
-    });
-  }, [services, searchQuery, selectedCategory, selectedSubcategory]);
-
-  // Packages matching category
-  const categoryPackages = useMemo(() => {
-    return packages.filter((p) => {
-      if (!p.active) return false;
-      if (searchQuery.trim() !== '') {
-        const q = searchQuery.toLowerCase().trim();
-        return (
-          p.name.toLowerCase().includes(q) ||
-          p.description.toLowerCase().includes(q) ||
-          p.category.toLowerCase().includes(q)
-        );
-      }
-      return p.category.toLowerCase() === selectedCategory.toLowerCase();
-    });
-  }, [packages, searchQuery, selectedCategory]);
-
-  const activeRequest = requests[0];
-
+  // Category Icon helper
   const getCategoryIcon = (id: string) => {
     switch (id) {
-      case 'ac-appliances': return <Wrench className="w-5 h-5 text-[#003523]" />;
-      case 'electrical': return <Zap className="w-5 h-5 text-[#904d00]" />;
-      case 'plumbing': return <Droplets className="w-5 h-5 text-[#003523]" />;
-      case 'carpentry': return <Hammer className="w-5 h-5 text-[#404943]" />;
-      case 'fabrication': return <Hammer className="w-5 h-5 text-[#904d00]" />;
-      case 'painting': return <Paintbrush className="w-5 h-5 text-[#904d00]" />;
-      case 'cleaning': return <Sparkles className="w-5 h-5 text-[#003523]" />;
-      case 'pest-control': return <ShieldAlert className="w-5 h-5 text-[#ba1a1a]" />;
-      case 'salon-women': return <Heart className="w-5 h-5 text-[#ba1a1a]" />;
-      case 'grooming-men': return <Scissors className="w-5 h-5 text-[#404943]" />;
-      case 'home-projects': return <Home className="w-5 h-5 text-[#003523]" />;
-      default: return <PlusCircle className="w-5 h-5 text-[#003523]" />;
+      case 'ac-appliances':
+        return <Wrench className="w-6 h-6 text-[#0F3D2E]" />;
+      case 'electrical':
+        return <Zap className="w-6 h-6 text-[#F28C28]" />;
+      case 'plumbing':
+        return <Droplets className="w-6 h-6 text-[#0F3D2E]" />;
+      case 'carpentry':
+        return <Hammer className="w-6 h-6 text-[#4A5568]" />;
+      case 'fabrication':
+        return <ShieldCheck className="w-6 h-6 text-[#0F3D2E]" />;
+      case 'cleaning':
+        return <Sparkles className="w-6 h-6 text-[#0F3D2E]" />;
+      case 'painting':
+        return <Paintbrush className="w-6 h-6 text-[#F28C28]" />;
+      case 'pest-control':
+        return <ShieldAlert className="w-6 h-6 text-[#BA1A1A]" />;
+      default:
+        return <Wrench className="w-6 h-6 text-[#0F3D2E]" />;
     }
   };
 
-  // Frequently Booked Together Pair
+  // 6 Curated Popular Services for the horizontal carousel
+  const popularServices = useMemo(() => {
+    const popularIds = [
+      'srv-ac-foam',
+      'srv-fan-repair',
+      'srv-water-motor',
+      'srv-tap-repair',
+      'srv-switchboard',
+      'srv-kitchen-clean'
+    ];
+    const picked = popularIds
+      .map((id) => services.find((s) => s.id === id))
+      .filter((s): s is NonNullable<typeof s> => Boolean(s));
+
+    if (picked.length >= 6) return picked.slice(0, 6);
+    // Fallback to active services if IDs change
+    return services.filter((s) => s.active).slice(0, 6);
+  }, [services]);
+
+  // Frequently Booked Together Bundle Pair
   const bundlePair = useMemo(() => {
     const s1 = services.find((s) => s.id === 'srv-ac-foam');
     const s2 = services.find((s) => s.id === 'srv-fan-repair');
@@ -161,885 +151,779 @@ export const HomePage: React.FC = () => {
     return null;
   }, [services]);
 
-  // General FAQs for catalogue
-  const catalogueFaqs = [
+  // Active Zone for the Sector Checker
+  const activeZone = useMemo(() => {
+    return (
+      SERVICE_AVAILABLE_ZONES.find((z) => z.id === selectedZoneId) ||
+      SERVICE_AVAILABLE_ZONES[0]
+    );
+  }, [selectedZoneId]);
+
+  // Handle Search submit
+  const handleSearchSubmit = (e?: React.FormEvent) => {
+    if (e) e.preventDefault();
+    setCurrentPage('services');
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  };
+
+  // Handle Quick Chip click
+  const handleChipClick = (chip: string) => {
+    setSearchQuery(chip);
+    setCurrentPage('services');
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  };
+
+  // FAQ list with consistent pricing and ETA rules
+  const faqs = [
     {
-      q: 'How does local operations dispatch protect customer pricing and safety?',
-      a: 'Unlike algorithmic aggregator apps that blindly push leads to unvetted gig workers, every UrbanCare Solution booking is audited by our Kharar dispatch officer at Sector 125, Sunny Enclave. We assign an accountable, background-verified technician equipped with verified tools and enforce genuine retail shop MRP billing on replacement parts.'
+      q: 'How much is the doorstep inspection fee?',
+      a: `${PRICING_CONFIG.inspectionFeeRule} Diagnostics include complete troubleshooting with professional testing tools. If you approve the repair, you only pay for the service itself.`
     },
     {
-      q: 'What is the pricing policy for inspection fees and spare parts?',
-      a: 'Doorstep inspection fees range from ₹149 to ₹199 and cover comprehensive diagnostics. If you proceed with the repair or book a care package, the visit fee is waived. All hardware replacement parts (capacitors, brass valves, wires) are billed strictly at retail shop MRP with shop receipts.'
+      q: 'How fast can a technician reach my home in Mohali or Kharar?',
+      a: `${PRICING_CONFIG.etaDetailed} Our technicians are dispatched from our Kharar Operations Hub, reaching enclaves in Sectors 94–111 typically within 25 to 35 minutes.`
     },
     {
       q: 'Do I have to pay any advance before work begins?',
-      a: 'No. Standard home repairs require ₹0 advance payment. You inspect and test the completed work in your home first, then pay directly via UPI or Cash. For large Home Projects (modular kitchens, renovations), payments are tied to verified civil delivery milestones.'
+      a: 'No. Standard home repairs require ₹0 advance payment. You inspect and test the completed work in your home first, then pay directly via UPI, Card, or Cash.'
     },
     {
-      q: 'What is covered under the UrbanCare Solution 30-Day Workmanship Warranty?',
-      a: 'If any serviced appliance, repaired joint, tap fitting, or switchboard re-develops an issue within 30 days of completion, our local dispatch supervisor schedules a technician visit with zero extra charge.'
+      q: 'What is covered under the 30-Day Workmanship Warranty?',
+      a: `${PRICING_CONFIG.warrantyPromise} If any serviced appliance, repaired joint, tap fitting, or switchboard re-develops an issue within 30 days, we revisit with zero extra labor charge.`
     },
     {
-      q: 'How do I request a custom repair or complete home renovation?',
-      a: 'Tap "Post Custom Task" for unique domestic breakdowns, or click "Start a Home Project" for modular kitchens, painting, or renovations. A senior civil supervisor visits your residence for laser measurement and prepares an itemized Bill of Quantities (BOQ).'
+      q: 'How are spare parts billed?',
+      a: `${PRICING_CONFIG.partsPolicy} Our technicians do not inflate parts prices or install counterfeit hardware. You receive the retail store invoice with every component.`
     }
   ];
 
   return (
-    <div className="space-y-8 pb-16">
-      {/* 1. Top Operations Desk Status Ribbon */}
-      <div className="bg-[#002114] text-white border-b border-[#144d37]/50 text-xs py-2 px-4">
-        <div className="max-w-7xl mx-auto flex flex-col sm:flex-row items-center justify-between gap-2">
-          <div className="flex items-center space-x-2">
-            <span className="w-2 h-2 rounded-full bg-[#fe932c] animate-pulse"></span>
-            <span className="font-bold text-[#b6efd1]">UrbanCare Operations Dispatch Desk:</span>
-            <span className="text-gray-200">Dispatches active across {currentLocality} (Sectors 94 to 111, Mohali)</span>
-          </div>
-          <div className="flex items-center space-x-4 text-[11px] text-gray-300">
-            <span>Direct Dispatch: <strong className="text-white">+91 8284018909</strong></span>
-            <span className="hidden md:inline">·</span>
-            <span className="text-[#fe932c] font-semibold hidden md:inline">₹0 Advance · Pay After Completion</span>
-          </div>
-        </div>
-      </div>
-
-      {/* 2. Primary 5-Second Comprehension Hero Section */}
-      <section className="bg-gradient-to-b from-[#f2f3ff] via-[#faf8ff] to-white pt-6 pb-10 border-b border-[#c0c9c2]/30">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 space-y-6">
-          {/* Main Headline & Trust Kicker */}
-          <div className="max-w-3xl space-y-2.5">
-            <div className="flex items-center space-x-2 text-xs font-bold text-[#003523]">
-              <span className="px-2.5 py-0.5 rounded-full bg-[#c0edd3]/60 text-[#003523] uppercase tracking-wider text-[11px]">
-                Mohali Doorstep Care
-              </span>
-              <span>· Sectors 94 to 111 · Mohali</span>
-            </div>
-            <h1 className="text-3xl sm:text-4xl lg:text-5xl font-black text-[#131b2e] tracking-tight leading-tight">
-              Honest Home Services & Repairs in Kharar & Mohali
+    <div className="space-y-12 sm:space-y-16 pb-20 font-['Inter',sans-serif]">
+      {/* =========================================================
+          1. HERO SECTION
+          H1, 1-line subtext, search bar, 5 quick chips,
+          Primary "Book a Service" + Secondary "WhatsApp Us",
+          Single-color trust chips row
+          ========================================================= */}
+      <section className="bg-gradient-to-b from-[#F2F7F4] via-white to-white pt-8 sm:pt-12 pb-6 border-b border-gray-100">
+        <div className="max-w-4xl mx-auto px-4 sm:px-6 text-center space-y-6">
+          {/* Main H1 & 1-Line Subtext */}
+          <div className="space-y-3">
+            <span className="inline-flex items-center px-3 py-1 rounded-full bg-[#0F3D2E]/10 text-[#0F3D2E] text-xs font-semibold tracking-wide">
+              Serving Sectors 94–111, Mohali & Kharar
+            </span>
+            <h1 className="text-3xl sm:text-4xl md:text-5xl font-black text-[#1A1A1A] tracking-tight leading-tight">
+              Trusted Home Repairs in Kharar & Mohali
             </h1>
-            <p className="text-sm sm:text-base text-[#404943] leading-relaxed">
-              From quick AC and electrical repairs to modular kitchens and turnkey renovations. Handled by verified local technicians, managed and guaranteed by our Kharar Operations Team.
+            <p className="text-sm sm:text-base text-gray-600 leading-relaxed max-w-2xl mx-auto">
+              Verified local electricians, plumbers & technicians at your doorstep in {PRICING_CONFIG.etaStandard}. ₹0 advance payment.
             </p>
           </div>
 
-          {/* 5-Second Clarity Grid: 4 Core Answers for the Customer */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 pt-2">
-            {/* Box 1: Available Services */}
-            <div className="p-4 rounded-xl bg-white border border-[#c0c9c2]/60 shadow-xs flex flex-col justify-between">
-              <div className="space-y-1">
-                <div className="flex items-center space-x-2 text-[#003523] font-bold text-xs">
-                  <Wrench className="w-4 h-4 text-[#003523]" />
-                  <span>1. What We Offer</span>
-                </div>
-                <div className="text-sm font-extrabold text-[#131b2e]">
-                  Repairs, Combos & Projects
-                </div>
-                <p className="text-xs text-[#707973]">
-                  AC, electrical, plumbing, carpentry, cleaning, painting & full home renovations.
-                </p>
-              </div>
-              <div className="text-[11px] text-[#003523] font-bold mt-2 pt-2 border-t border-[#c0c9c2]/30">
-                Starting ₹149 inspection fee
-              </div>
-            </div>
-
-            {/* Box 2: Clear Pricing */}
-            <div className="p-4 rounded-xl bg-white border border-[#c0c9c2]/60 shadow-xs flex flex-col justify-between">
-              <div className="space-y-1">
-                <div className="flex items-center space-x-2 text-[#904d00] font-bold text-xs">
-                  <Tag className="w-4 h-4 text-[#fe932c]" />
-                  <span>2. What It Costs</span>
-                </div>
-                <div className="text-sm font-extrabold text-[#131b2e]">
-                  Transparent & Honest Rates
-                </div>
-                <p className="text-xs text-[#707973]">
-                  Fixed diagnostic fee waived with repair. Spare parts billed at retail shop MRP.
-                </p>
-              </div>
-              <div className="text-[11px] text-[#904d00] font-bold mt-2 pt-2 border-t border-[#c0c9c2]/30">
-                ₹0 Advance · Pay on completion
-              </div>
-            </div>
-
-            {/* Box 3: How to Book */}
-            <div className="p-4 rounded-xl bg-white border border-[#c0c9c2]/60 shadow-xs flex flex-col justify-between">
-              <div className="space-y-1">
-                <div className="flex items-center space-x-2 text-[#003523] font-bold text-xs">
-                  <Clock className="w-4 h-4 text-[#003523]" />
-                  <span>3. How to Book</span>
-                </div>
-                <div className="text-sm font-extrabold text-[#131b2e]">
-                  Pick Slot in 2 Clicks
-                </div>
-                <p className="text-xs text-[#707973]">
-                  Select service, choose your preferred doorstep slot, and receive instant booking ID.
-                </p>
-              </div>
-              <div className="text-[11px] text-[#003523] font-bold mt-2 pt-2 border-t border-[#c0c9c2]/30">
-                Doorstep visit within 90 mins
-              </div>
-            </div>
-
-            {/* Box 4: Local Operations Governance */}
-            <div className="p-4 rounded-xl bg-[#c0edd3]/25 border border-[#b6efd1] shadow-xs flex flex-col justify-between">
-              <div className="space-y-1">
-                <div className="flex items-center space-x-2 text-[#003523] font-bold text-xs">
-                  <ShieldCheck className="w-4 h-4 text-[#003523]" />
-                  <span>4. Local Ops Supervision</span>
-                </div>
-                <div className="text-sm font-extrabold text-[#131b2e]">
-                  Human Team in Kharar
-                </div>
-                <p className="text-xs text-[#404943]">
-                  Every job is manually assigned and inspected by our local supervisor.
-                </p>
-              </div>
-              <div className="text-[11px] text-[#003523] font-bold mt-2 pt-2 border-t border-[#b6efd1]/60">
-                Backed by 30-day warranty
-              </div>
-            </div>
-          </div>
-
-          {/* Quick Problem Symptom Search & Filter Bar */}
-          <div className="space-y-3 pt-2">
-            <div className="relative">
-              <Search className="w-5 h-5 absolute left-4 top-3.5 text-[#707973]" />
-              <input
-                type="text"
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                placeholder="Search by repair or symptom (e.g. AC not cooling, fan repair, leaking tap, switchboard)..."
-                className="w-full pl-12 pr-16 py-3.5 rounded-xl border border-[#c0c9c2] bg-white text-sm text-[#131b2e] placeholder:text-gray-400 focus:border-[#003523] focus:ring-2 focus:ring-[#003523]/10 shadow-xs transition-all"
-              />
-              {searchQuery && (
-                <button
-                  onClick={() => setSearchQuery('')}
-                  className="absolute right-4 top-3.5 text-xs font-bold text-[#707973] hover:text-[#131b2e] bg-gray-100 hover:bg-gray-200 px-2 py-0.5 rounded"
-                >
-                  Clear
-                </button>
-              )}
-            </div>
-
-            {/* Quick Symptom Chips */}
-            <div className="flex items-center space-x-2 overflow-x-auto pb-1 text-xs no-scrollbar">
-              <span className="text-[#707973] whitespace-nowrap pl-0.5 font-medium">Common Needs:</span>
-              {searchChips.map((chip) => (
-                <button
-                  key={chip}
-                  onClick={() => {
-                    setSearchQuery(chip);
-                    const el = document.getElementById('services-catalog-view');
-                    if (el) el.scrollIntoView({ behavior: 'smooth' });
-                  }}
-                  className={`px-3 py-1.5 rounded-lg border whitespace-nowrap text-xs font-medium transition-colors ${
-                    searchQuery === chip
-                      ? 'bg-[#003523] text-white border-[#003523]'
-                      : 'bg-white text-[#404943] border-[#c0c9c2]/60 hover:border-[#003523] hover:bg-[#faf8ff]'
-                  }`}
-                >
-                  {chip}
-                </button>
-              ))}
-            </div>
-          </div>
-
-          {/* 3 Prominent CTAs */}
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 pt-1">
+          {/* Search Bar */}
+          <form
+            onSubmit={handleSearchSubmit}
+            className="max-w-xl mx-auto relative flex items-center shadow-xs focus-within:shadow-md transition-shadow rounded-2xl"
+          >
+            <Search className="w-5 h-5 absolute left-4 text-gray-400 pointer-events-none" />
+            <input
+              type="text"
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              placeholder="Search repair or problem (e.g. AC cooling, fan, tap leak)..."
+              className="w-full pl-12 pr-28 py-3.5 sm:py-4 rounded-2xl border border-gray-300 bg-white text-sm text-[#1A1A1A] placeholder:text-gray-400 focus:border-[#0F3D2E] focus:ring-2 focus:ring-[#0F3D2E]/15 focus:outline-none transition-all"
+            />
             <button
+              type="submit"
+              className="absolute right-2 px-4 py-2 sm:py-2.5 rounded-xl bg-[#0F3D2E] hover:bg-[#144d37] text-white text-xs sm:text-sm font-semibold transition-all min-h-[38px] flex items-center justify-center cursor-pointer"
+            >
+              Search
+            </button>
+          </form>
+
+          {/* 5 Quick Chips */}
+          <div className="flex flex-wrap items-center justify-center gap-2 pt-1 text-xs">
+            <span className="text-gray-500 font-medium mr-1">Common:</span>
+            {quickChips.map((chip) => (
+              <button
+                key={chip}
+                type="button"
+                onClick={() => handleChipClick(chip)}
+                className="px-3 py-1.5 rounded-lg border border-gray-200 bg-white hover:border-[#0F3D2E] hover:bg-emerald-50/50 text-gray-700 font-medium transition-all cursor-pointer"
+              >
+                {chip}
+              </button>
+            ))}
+          </div>
+
+          {/* Dual CTAs: Primary "Book a Service" + Secondary "WhatsApp Us" */}
+          <div className="flex flex-col sm:flex-row items-center justify-center gap-3 pt-2">
+            <button
+              type="button"
               onClick={() => {
-                const el = document.getElementById('services-catalog-view');
-                if (el) el.scrollIntoView({ behavior: 'smooth' });
+                setCurrentPage('services');
+                window.scrollTo({ top: 0, behavior: 'smooth' });
               }}
-              className="p-4 bg-white rounded-xl border border-[#c0c9c2]/70 hover:border-[#003523] shadow-xs hover:shadow-sm transition-all text-left group flex items-center justify-between"
+              className="w-full sm:w-auto px-7 py-3.5 rounded-xl bg-[#F28C28] hover:bg-[#d9771e] text-[#0F3D2E] font-bold text-sm sm:text-base shadow-sm hover:shadow-md active:scale-[0.98] transition-all min-h-[44px] flex items-center justify-center space-x-2 focus-visible:ring-2 focus-visible:ring-[#0F3D2E] focus-visible:outline-none cursor-pointer"
             >
-              <div className="flex items-center space-x-3">
-                <div className="w-10 h-10 rounded-xl bg-[#ffdcc3] text-[#904d00] flex items-center justify-center font-bold">
-                  <Zap className="w-5 h-5" />
-                </div>
-                <div>
-                  <div className="text-sm font-bold text-[#131b2e] group-hover:text-[#003523]">
-                    Book Quick Service
-                  </div>
-                  <div className="text-xs text-[#707973]">Doorstep visit in 90 mins</div>
-                </div>
-              </div>
-              <ArrowRight className="w-4 h-4 text-[#707973] group-hover:text-[#003523] group-hover:translate-x-1 transition-transform" />
+              <span>Book a Service</span>
+              <ArrowRight className="w-4 h-4" />
             </button>
 
-            <button
-              onClick={() => setIsProjectModalOpen(true)}
-              className="p-4 bg-white rounded-xl border border-[#c0c9c2]/70 hover:border-[#003523] shadow-xs hover:shadow-sm transition-all text-left group flex items-center justify-between"
+            <a
+              href="https://wa.me/918284018909"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="w-full sm:w-auto px-6 py-3.5 rounded-xl border-2 border-[#0F3D2E] text-[#0F3D2E] bg-transparent hover:bg-[#0F3D2E]/5 font-bold text-sm sm:text-base transition-all min-h-[44px] flex items-center justify-center space-x-2 focus-visible:ring-2 focus-visible:ring-[#0F3D2E] focus-visible:outline-none cursor-pointer"
             >
-              <div className="flex items-center space-x-3">
-                <div className="w-10 h-10 rounded-xl bg-[#c0edd3] text-[#003523] flex items-center justify-center font-bold">
-                  <Home className="w-5 h-5" />
-                </div>
-                <div>
-                  <div className="text-sm font-bold text-[#131b2e] group-hover:text-[#003523]">
-                    Start a Home Project
-                  </div>
-                  <div className="text-xs text-[#707973]">Modular kitchen & renovation</div>
-                </div>
-              </div>
-              <ArrowRight className="w-4 h-4 text-[#707973] group-hover:text-[#003523] group-hover:translate-x-1 transition-transform" />
-            </button>
+              <MessageCircle className="w-4 h-4 text-emerald-700" />
+              <span>WhatsApp Us</span>
+            </a>
+          </div>
 
-            <button
-              onClick={() => setIsCustomTaskModalOpen(true)}
-              className="p-4 bg-white rounded-xl border border-[#c0c9c2]/70 hover:border-[#003523] shadow-xs hover:shadow-sm transition-all text-left group flex items-center justify-between"
-            >
-              <div className="flex items-center space-x-3">
-                <div className="w-10 h-10 rounded-xl bg-[#eaedff] text-[#003523] flex items-center justify-center font-bold">
-                  <PlusCircle className="w-5 h-5" />
-                </div>
-                <div>
-                  <div className="text-sm font-bold text-[#131b2e] group-hover:text-[#003523]">
-                    Post Custom Task
-                  </div>
-                  <div className="text-xs text-[#707973]">Have a unique domestic repair?</div>
-                </div>
+          {/* Unified Trust Chips Row (1 Single Color Theme) */}
+          <div className="pt-4 max-w-3xl mx-auto">
+            <div className="flex flex-wrap items-center justify-center gap-2 sm:gap-3 text-xs sm:text-sm font-semibold text-[#0F3D2E]">
+              <div className="inline-flex items-center space-x-1.5 px-3 py-1.5 rounded-full bg-[#0F3D2E]/5 border border-[#0F3D2E]/15">
+                <Check className="w-3.5 h-3.5 text-[#0F3D2E] stroke-[3]" />
+                <span>₹0 Advance</span>
               </div>
-              <ArrowRight className="w-4 h-4 text-[#707973] group-hover:text-[#003523] group-hover:translate-x-1 transition-transform" />
-            </button>
+              <div className="inline-flex items-center space-x-1.5 px-3 py-1.5 rounded-full bg-[#0F3D2E]/5 border border-[#0F3D2E]/15">
+                <Check className="w-3.5 h-3.5 text-[#0F3D2E] stroke-[3]" />
+                <span>Pay After Completion</span>
+              </div>
+              <div className="inline-flex items-center space-x-1.5 px-3 py-1.5 rounded-full bg-[#0F3D2E]/5 border border-[#0F3D2E]/15">
+                <Check className="w-3.5 h-3.5 text-[#0F3D2E] stroke-[3]" />
+                <span>Verified Professionals</span>
+              </div>
+              <div className="inline-flex items-center space-x-1.5 px-3 py-1.5 rounded-full bg-[#0F3D2E]/5 border border-[#0F3D2E]/15">
+                <Check className="w-3.5 h-3.5 text-[#0F3D2E] stroke-[3]" />
+                <span>30-Day Warranty</span>
+              </div>
+            </div>
           </div>
         </div>
       </section>
 
-      {/* Active Ongoing Order Tracker (if exists) */}
-      {activeRequest && (
+      {/* =========================================================
+          CONDITIONAL ACTIVE ORDER TRACKER
+          Strictly shown for logged-in residents with active orders.
+          ========================================================= */}
+      {activeOrder && (
         <section className="max-w-7xl mx-auto px-4 sm:px-6">
-          <div className="bg-[#eaedff] border border-[#c0c9c2]/60 rounded-xl p-4 shadow-xs flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
+          <div className="bg-emerald-50/70 border border-emerald-200 rounded-2xl p-4 sm:p-5 shadow-xs flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
             <div className="space-y-1">
               <div className="flex items-center space-x-2">
-                <span className="w-2.5 h-2.5 rounded-full bg-[#fe932c] animate-pulse"></span>
-                <span className="text-xs font-bold text-[#003523] uppercase tracking-wider">
+                <span className="w-2.5 h-2.5 rounded-full bg-[#F28C28] animate-pulse" />
+                <span className="text-xs font-bold text-[#0F3D2E] uppercase tracking-wider">
                   Active Service Request
                 </span>
-                <span className="text-xs bg-white px-2 py-0.5 rounded-md font-mono font-bold text-[#131b2e]">
-                  #{activeRequest.id}
+                <span className="text-xs bg-white px-2 py-0.5 rounded-md font-mono font-bold text-gray-800 border border-emerald-200">
+                  #{activeOrder.id}
                 </span>
               </div>
-              <div className="text-sm font-bold text-[#131b2e]">
-                {activeRequest.items.map((i) => i.serviceName).join(', ')}
+              <div className="text-sm font-bold text-[#1A1A1A]">
+                {activeOrder.items.map((i) => i.serviceName).join(', ')}
               </div>
-              <div className="text-xs text-[#404943]">
-                Status: <strong className="text-[#003523]">{activeRequest.status}</strong> · {activeRequest.locality} · Preferred Slot: {activeRequest.preferredTimeSlot}
+              <div className="text-xs text-gray-600">
+                Status: <strong className="text-[#0F3D2E]">{activeOrder.status}</strong> · {activeOrder.locality}
               </div>
+              <CustomerOtpDisplay
+                requestId={activeOrder.id}
+                status={activeOrder.status}
+                bookingUserId={activeOrder.user_id}
+                customerPhone={activeOrder.customerPhone}
+                className="mt-2"
+              />
             </div>
 
             <button
-              onClick={() => setActiveTrackingRequestId(activeRequest.id)}
-              className="px-4 py-2 bg-[#003523] hover:bg-[#144d37] text-white text-xs font-bold rounded-lg shadow-xs transition-all flex items-center space-x-1.5 self-stretch sm:self-auto justify-center"
+              type="button"
+              onClick={() => setActiveTrackingRequestId(activeOrder.id)}
+              className="w-full sm:w-auto px-5 py-2.5 bg-[#0F3D2E] hover:bg-[#144d37] text-white text-xs sm:text-sm font-bold rounded-xl shadow-xs transition-all min-h-[44px] flex items-center justify-center space-x-2 focus-visible:ring-2 focus-visible:ring-[#0F3D2E] focus-visible:outline-none cursor-pointer"
             >
               <span>Track Live Status</span>
-              <ArrowRight className="w-3.5 h-3.5" />
+              <ArrowRight className="w-4 h-4" />
             </button>
           </div>
         </section>
       )}
 
-      {/* 3. Popular Service Categories Strip */}
+      {/* =========================================================
+          2. CATEGORIES SECTION (8-Category Icon Grid)
+          Links directly to category pages/routes
+          ========================================================= */}
+      <section className="max-w-7xl mx-auto px-4 sm:px-6 space-y-5">
+        <div className="flex items-center justify-between">
+          <div>
+            <h2 className="text-xl sm:text-2xl font-bold text-[#1A1A1A] tracking-tight">
+              Explore Services
+            </h2>
+            <p className="text-xs sm:text-sm text-gray-500 mt-0.5">
+              Verified local technicians ready across Sectors 94–111
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={() => {
+              setCurrentPage('services');
+              window.scrollTo({ top: 0, behavior: 'smooth' });
+            }}
+            className="text-xs sm:text-sm font-bold text-[#0F3D2E] hover:underline flex items-center space-x-1 cursor-pointer"
+          >
+            <span>All 35+ Services</span>
+            <ArrowRight className="w-3.5 h-3.5" />
+          </button>
+        </div>
+
+        {/* 8-Category Responsive Grid */}
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 sm:gap-4">
+          {mainCategories.map((cat) => (
+            <button
+              key={cat.id}
+              type="button"
+              onClick={() => {
+                setCurrentPage('services');
+                window.scrollTo({ top: 0, behavior: 'smooth' });
+              }}
+              className="p-4 sm:p-5 rounded-2xl border border-gray-200/90 bg-white hover:border-[#0F3D2E] hover:bg-emerald-50/30 transition-all text-center flex flex-col items-center justify-center space-y-2.5 group shadow-xs hover:shadow-sm active:scale-[0.98] cursor-pointer"
+            >
+              <div className="w-12 h-12 rounded-xl bg-gray-50 group-hover:bg-white flex items-center justify-center border border-gray-100 transition-colors">
+                {getCategoryIcon(cat.id)}
+              </div>
+              <div>
+                <div className="text-xs sm:text-sm font-bold text-[#1A1A1A] group-hover:text-[#0F3D2E] transition-colors leading-tight">
+                  {cat.name}
+                </div>
+                <div className="text-[11px] text-gray-500 mt-0.5 font-medium">
+                  {cat.count} services
+                </div>
+              </div>
+            </button>
+          ))}
+        </div>
+      </section>
+
+      {/* =========================================================
+          3. POPULAR SERVICES (Horizontal Swipe Carousel)
+          6 real services, name, rating, price, duration, Book button.
+          Single global visit fee note underneath.
+          ========================================================= */}
       <section className="max-w-7xl mx-auto px-4 sm:px-6 space-y-4">
         <div className="flex items-center justify-between">
           <div>
-            <h2 className="text-xl font-extrabold text-[#131b2e]">Explore by Category</h2>
-            <p className="text-xs text-[#707973]">
-              Verified local artisan teams active across Sectors 94 to 111 (Mohali)
+            <h2 className="text-xl sm:text-2xl font-bold text-[#1A1A1A] tracking-tight">
+              Popular Doorstep Repairs
+            </h2>
+            <p className="text-xs sm:text-sm text-gray-500 mt-0.5">
+              Most requested repairs in Mohali & Kharar this week
             </p>
           </div>
           <button
-            onClick={() => setIsViewAllModalOpen(true)}
-            className="text-xs font-bold text-[#003523] hover:underline flex items-center space-x-1"
+            type="button"
+            onClick={() => {
+              setCurrentPage('services');
+              window.scrollTo({ top: 0, behavior: 'smooth' });
+            }}
+            className="text-xs sm:text-sm font-bold text-[#0F3D2E] hover:underline flex items-center space-x-1 cursor-pointer"
           >
-            <Grid className="w-3.5 h-3.5" />
-            <span>All Categories ({SERVICE_CATEGORIES.length})</span>
+            <span>View All</span>
+            <ArrowRight className="w-3.5 h-3.5" />
           </button>
         </div>
 
-        {/* Popular Category Cards */}
-        <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-6 gap-3">
-          {SERVICE_CATEGORIES.filter((c) => c.popular).map((cat) => {
-            const isSelected = selectedCategory.toLowerCase() === cat.name.toLowerCase() && !searchQuery;
-            return (
-              <button
-                key={cat.id}
-                onClick={() => {
-                  setSelectedCategory(cat.name);
-                  setSelectedSubcategory('All');
-                  setSearchQuery('');
-                  const el = document.getElementById('services-catalog-view');
-                  if (el) el.scrollIntoView({ behavior: 'smooth' });
-                }}
-                className={`p-3.5 rounded-xl border text-center transition-all flex flex-col items-center justify-center space-y-2 group ${
-                  isSelected
-                    ? 'bg-[#c0edd3]/25 border-[#003523] shadow-xs ring-1 ring-[#003523]'
-                    : 'bg-white border-[#c0c9c2]/50 hover:border-[#003523] hover:bg-[#faf8ff]'
-                }`}
+        {/* Horizontal Scroll / Swipe Container with Loading Skeletons */}
+        {isLoadingData && popularServices.length === 0 ? (
+          <div className="flex overflow-x-auto gap-4 pb-3 pt-1 snap-x no-scrollbar -mx-4 px-4 sm:mx-0 sm:px-0">
+            {[1, 2, 3, 4].map((i) => (
+              <div
+                key={i}
+                className="w-72 sm:w-80 shrink-0 bg-white rounded-2xl border border-gray-200/90 p-5 shadow-xs animate-pulse space-y-4"
               >
-                <div className="w-11 h-11 rounded-lg bg-[#f2f3ff] group-hover:bg-[#eaedff] flex items-center justify-center transition-colors">
-                  {getCategoryIcon(cat.id)}
+                <div className="space-y-2">
+                  <div className="h-4 bg-gray-200 rounded w-1/3"></div>
+                  <div className="h-5 bg-gray-200 rounded w-3/4"></div>
+                  <div className="h-10 bg-gray-100 rounded w-full"></div>
                 </div>
-                <div>
-                  <div className="text-xs font-bold text-[#131b2e] leading-tight">{cat.name}</div>
-                  <div className="text-[11px] text-[#707973] mt-0.5">{cat.count} services</div>
+                <div className="pt-3 border-t border-gray-100 flex items-center justify-between">
+                  <div className="h-6 bg-gray-200 rounded w-16"></div>
+                  <div className="h-10 bg-gray-200 rounded w-24"></div>
                 </div>
-              </button>
-            );
-          })}
+              </div>
+            ))}
+          </div>
+        ) : dataLoadError && popularServices.length === 0 ? (
+          <div className="p-5 rounded-2xl bg-amber-50 border border-amber-200 text-amber-800 text-xs sm:text-sm flex items-center justify-between">
+            <span>Unable to load services catalog: {dataLoadError}</span>
+            <button
+              onClick={() => window.location.reload()}
+              className="px-3 py-1.5 rounded-lg bg-amber-200 hover:bg-amber-300 font-bold text-xs cursor-pointer"
+            >
+              Retry
+            </button>
+          </div>
+        ) : (
+          <div className="flex overflow-x-auto gap-4 pb-3 pt-1 snap-x snap-mandatory no-scrollbar -mx-4 px-4 sm:mx-0 sm:px-0">
+            {popularServices.map((service) => {
+              const inCart = cart.some((c) => c.serviceId === service.id);
+              return (
+                <div
+                  key={service.id}
+                  className="w-72 sm:w-80 shrink-0 snap-start bg-white rounded-2xl border border-gray-200/90 p-4 sm:p-5 shadow-xs hover:shadow-md transition-all flex flex-col justify-between space-y-4"
+                >
+                  <div className="space-y-2">
+                    <div className="flex items-center justify-between text-xs">
+                      <span className="font-semibold text-gray-500 truncate max-w-[150px]">
+                        {service.category}
+                      </span>
+                      <span className="inline-flex items-center space-x-1 text-amber-700 bg-amber-50 px-2 py-0.5 rounded-md font-bold">
+                        <Star className="w-3 h-3 fill-amber-500 text-amber-500" />
+                        <span>4.9</span>
+                      </span>
+                    </div>
+
+                    <h3 className="font-bold text-sm sm:text-base text-[#1A1A1A] line-clamp-1">
+                      {service.name}
+                    </h3>
+
+                    <p className="text-xs text-gray-500 line-clamp-2 leading-relaxed">
+                      {service.description}
+                    </p>
+                  </div>
+
+                  <div className="pt-3 border-t border-gray-100 flex items-center justify-between">
+                    <div>
+                      <div className="text-lg sm:text-xl font-black text-[#0F3D2E]">
+                        ₹{service.basePrice}
+                      </div>
+                      <div className="text-[11px] text-gray-500 font-medium">
+                        ~{service.duration || '45 mins'}
+                      </div>
+                    </div>
+
+                    <button
+                      type="button"
+                      onClick={() => {
+                        addToCart(service, 1);
+                        showToast(`${service.name} added to basket`, 'success');
+                      }}
+                      className={`px-4 py-2.5 rounded-xl font-bold text-xs sm:text-sm min-h-[44px] flex items-center justify-center space-x-1.5 transition-all active:scale-[0.98] cursor-pointer ${
+                        inCart
+                          ? 'bg-emerald-100 text-[#0F3D2E] border border-emerald-300'
+                          : 'bg-[#F28C28] hover:bg-[#d9771e] text-[#0F3D2E] shadow-xs'
+                      }`}
+                    >
+                      <span>{inCart ? 'Added ✓' : 'Book'}</span>
+                    </button>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+
+        {/* Global Inspection Fee & Spare Parts Policy Note (Shown ONCE) */}
+        <div className="p-3 bg-emerald-50/60 rounded-xl border border-emerald-100 text-xs text-gray-600 flex items-center space-x-2">
+          <ShieldCheck className="w-4 h-4 text-[#0F3D2E] shrink-0" />
+          <span>
+            <strong>Transparent Pricing:</strong> {PRICING_CONFIG.inspectionFeeRule}{' '}
+            {PRICING_CONFIG.partsPolicy}
+          </span>
         </div>
       </section>
 
-      {/* 4. Frequently Booked Together Smart Banner */}
+      {/* =========================================================
+          4. BUNDLE OFFER BANNER (Frequently Booked Together)
+          ========================================================= */}
       {bundlePair && (
         <section className="max-w-7xl mx-auto px-4 sm:px-6">
-          <div className="bg-[#ffdcc3]/20 border border-[#fe932c]/50 rounded-xl p-4 sm:p-5 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-            <div className="space-y-1">
-              <div className="flex items-center space-x-2 text-xs font-bold text-[#904d00]">
-                <Tag className="w-4 h-4 text-[#fe932c]" />
-                <span className="uppercase tracking-wider">Frequently Booked Together in Kharar</span>
+          <div className="bg-[#FFF8F2] border border-[#F28C28]/40 rounded-2xl p-5 sm:p-6 shadow-xs flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
+            <div className="space-y-1.5 max-w-2xl">
+              <div className="inline-flex items-center space-x-1.5 text-xs font-bold text-[#A85800] uppercase tracking-wider">
+                <Tag className="w-4 h-4 text-[#F28C28]" />
+                <span>Frequently Booked Together in Mohali</span>
               </div>
-              <h3 className="text-sm sm:text-base font-extrabold text-[#131b2e]">
+              <h3 className="text-base sm:text-lg font-bold text-[#1A1A1A]">
                 {bundlePair.s1.name} + {bundlePair.s2.name}
               </h3>
-              <p className="text-xs text-[#404943]">
-                Combine AC power wash with ceiling fan inspection during a single dispatch visit. Zero double visit fee.
+              <p className="text-xs sm:text-sm text-gray-600 leading-relaxed">
+                Combine AC cleaning with ceiling fan checkup in a single doorstep dispatch visit. Zero double inspection fee.
               </p>
             </div>
 
-            <div className="flex items-center space-x-3 shrink-0">
+            <div className="shrink-0 flex items-center space-x-4 w-full md:w-auto justify-between md:justify-end">
               <div>
-                <span className="text-[10px] text-[#707973] block">Bundle Price</span>
-                <span className="text-lg sm:text-xl font-black text-[#003523]">₹{bundlePair.total}</span>
+                <span className="text-[11px] text-gray-500 block">Bundle Price</span>
+                <span className="text-xl sm:text-2xl font-black text-[#0F3D2E]">
+                  ₹{bundlePair.total}
+                </span>
               </div>
+
               <button
+                type="button"
                 onClick={() => {
                   addToCart(bundlePair.s1, 1);
                   addToCart(bundlePair.s2, 1);
-                  showToast('Bundle added to your basket', 'success');
+                  showToast('Bundle package added to basket', 'success');
                 }}
-                className="px-4 py-2.5 rounded-lg bg-[#003523] hover:bg-[#144d37] text-white text-xs font-bold shadow-xs active:scale-98 transition-all flex items-center space-x-1.5"
+                className="px-6 py-3 rounded-xl bg-[#0F3D2E] hover:bg-[#144d37] text-white text-xs sm:text-sm font-bold min-h-[44px] shadow-sm hover:shadow-md active:scale-[0.98] transition-all flex items-center justify-center space-x-2 cursor-pointer"
               >
-                <Plus className="w-4 h-4" />
-                <span>Add Both (₹{bundlePair.total})</span>
+                <span>Book Both Services</span>
+                <ArrowRight className="w-4 h-4" />
               </button>
             </div>
           </div>
         </section>
       )}
 
-      {/* 5. Main Services & Packages Catalogue */}
-      <section id="services-catalog-view" className="max-w-7xl mx-auto px-4 sm:px-6 space-y-6">
-        {/* Category Header Strip */}
-        <div className="border-b border-[#c0c9c2]/40 pb-4 space-y-3">
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
-            <div>
-              <div className="flex items-center space-x-2">
-                <span className="text-xs font-bold text-[#003523] bg-[#c0edd3]/30 px-2 py-0.5 rounded-md uppercase tracking-wider">
-                  {selectedCategory}
-                </span>
-                <span className="text-xs text-[#707973]">
-                  · {activeCategoryObj.description}
-                </span>
-              </div>
-              <h2 className="text-2xl font-black text-[#131b2e] mt-1">
-                {selectedCategory}
-              </h2>
-            </div>
-
-            {/* Mode Toggle: All vs Singles vs Packages */}
-            <div className="flex items-center space-x-1 bg-[#eaedff] p-1 rounded-lg self-start sm:self-auto text-xs font-bold">
-              <button
-                onClick={() => setCatalogMode('all')}
-                className={`px-3 py-1.5 rounded-md transition-all ${
-                  catalogMode === 'all'
-                    ? 'bg-white text-[#003523] shadow-xs'
-                    : 'text-[#404943] hover:text-[#131b2e]'
-                }`}
-              >
-                All Options ({filteredServices.length + categoryPackages.length})
-              </button>
-              <button
-                onClick={() => setCatalogMode('services')}
-                className={`px-3 py-1.5 rounded-md transition-all ${
-                  catalogMode === 'services'
-                    ? 'bg-white text-[#003523] shadow-xs'
-                    : 'text-[#404943] hover:text-[#131b2e]'
-                }`}
-              >
-                Single Services ({filteredServices.length})
-              </button>
-              <button
-                onClick={() => setCatalogMode('packages')}
-                className={`px-3 py-1.5 rounded-md transition-all ${
-                  catalogMode === 'packages'
-                    ? 'bg-white text-[#003523] shadow-xs'
-                    : 'text-[#404943] hover:text-[#131b2e]'
-                }`}
-              >
-                Care Packages ({categoryPackages.length})
-              </button>
-            </div>
-          </div>
-
-          {/* Subcategory Navigation Tabs */}
-          <div className="flex items-center space-x-1.5 overflow-x-auto pb-1 text-xs no-scrollbar">
-            <button
-              onClick={() => setSelectedSubcategory('All')}
-              className={`px-3 py-1.5 rounded-md border whitespace-nowrap font-bold transition-all ${
-                selectedSubcategory === 'All'
-                  ? 'bg-[#003523] text-white border-[#003523]'
-                  : 'bg-white text-[#404943] border-[#c0c9c2]/60 hover:border-[#003523]'
-              }`}
-            >
-              All Subcategories
-            </button>
-            {availableSubcategories.map((sub) => {
-              const isSelected = selectedSubcategory === sub;
-              return (
-                <button
-                  key={sub}
-                  onClick={() => setSelectedSubcategory(sub)}
-                  className={`px-3 py-1.5 rounded-md border whitespace-nowrap font-bold transition-all ${
-                    isSelected
-                      ? 'bg-[#003523] text-white border-[#003523]'
-                      : 'bg-white text-[#404943] border-[#c0c9c2]/60 hover:border-[#003523]'
-                  }`}
-                >
-                  {sub}
-                </button>
-              );
-            })}
-          </div>
-        </div>
-
-        {/* 6. Packages Spotlight */}
-        {(catalogMode === 'all' || catalogMode === 'packages') && categoryPackages.length > 0 && (
-          <div className="space-y-3">
-            <div className="flex items-center justify-between">
-              <span className="text-xs font-black text-[#904d00] uppercase tracking-wider">
-                CARE PACKAGES · Complete Multi-Point Servicing
-              </span>
-              <span className="text-xs text-[#003523] font-bold">Direct Savings · Zero Doorstep Visit Fee</span>
-            </div>
-
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-              {categoryPackages.map((pkg) => (
-                <div
-                  key={pkg.id}
-                  className="bg-white rounded-xl border border-[#fe932c]/50 p-5 shadow-xs hover:shadow-sm transition-all flex flex-col justify-between relative overflow-hidden"
-                >
-                  <div className="space-y-2">
-                    <div className="flex items-center justify-between">
-                      <span className="text-xs font-bold text-[#003523]">{pkg.savings}</span>
-                      <span className="bg-[#ffdcc3] text-[#904d00] font-bold text-[10px] px-2 py-0.5 rounded">
-                        CARE COMBO
-                      </span>
-                    </div>
-
-                    <h3 className="text-base font-black text-[#131b2e]">{pkg.name}</h3>
-                    <p className="text-xs text-[#404943] leading-relaxed">{pkg.description}</p>
-
-                    <div className="space-y-1.5 pt-2 text-xs">
-                      {pkg.included.map((inc, i) => (
-                        <div key={i} className="flex items-start space-x-2 text-[#131b2e]">
-                          <Check className="w-3.5 h-3.5 text-[#003523] shrink-0 mt-0.5" />
-                          <span className="text-[11px]">{inc}</span>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-
-                  <div className="pt-4 border-t border-[#c0c9c2]/40 flex items-center justify-between mt-4">
-                    <div>
-                      <div className="flex items-baseline space-x-1.5">
-                        <span className="text-xl font-black text-[#003523]">₹{pkg.price}</span>
-                        <span className="text-xs text-[#707973] line-through">₹{pkg.originalPrice}</span>
-                      </div>
-                      <div className="text-[10px] text-[#003523] font-bold">Visit Fee Waived</div>
-                    </div>
-
-                    <button
-                      onClick={() => addPackageToCart(pkg)}
-                      className="px-4 py-2 rounded-lg bg-[#fe932c] hover:bg-[#e07f24] text-[#002114] font-bold text-xs shadow-xs active:scale-98 transition-all"
-                    >
-                      Book Package
-                    </button>
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
-        )}
-
-        {/* 7. Individual Service Cards Grid */}
-        {(catalogMode === 'all' || catalogMode === 'services') && (
-          <div className="space-y-3">
-            <div className="flex items-center justify-between">
-              <span className="text-xs font-black text-[#003523] uppercase tracking-wider">
-                {selectedSubcategory === 'All' ? 'INDIVIDUAL SERVICES' : selectedSubcategory.toUpperCase()}
-              </span>
-              <span className="text-xs text-[#707973]">
-                Showing {filteredServices.length} options
-              </span>
-            </div>
-
-            {filteredServices.length === 0 ? (
-              <div className="p-12 text-center bg-white rounded-xl border border-[#c0c9c2]/50 space-y-3">
-                <Search className="w-8 h-8 text-[#707973] mx-auto" />
-                <h3 className="text-base font-bold text-[#131b2e]">No exact matches found</h3>
-                <p className="text-xs text-[#707973]">
-                  Have a specific domestic repair? You can post your custom requirement directly.
-                </p>
-                <button
-                  onClick={() => setIsCustomTaskModalOpen(true)}
-                  className="px-4 py-2 bg-[#003523] text-white rounded-lg text-xs font-bold"
-                >
-                  Post Custom Requirement
-                </button>
-              </div>
-            ) : (
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                {filteredServices.map((service) => {
-                  const pricing = formatServicePricing(service);
-                  const inCart = cart.find((c) => c.serviceId === service.id);
-                  const count = inCart ? inCart.quantity : 0;
-                  const inclusions = (service.included_items || service.included || []).slice(0, 2);
-
-                  return (
-                    <div
-                      key={service.id}
-                      className="bg-white rounded-xl border border-[#c0c9c2]/60 hover:border-[#003523] p-5 shadow-xs hover:shadow-sm transition-all flex flex-col justify-between group"
-                    >
-                      <div className="space-y-3">
-                        {/* Top Metadata: Subcategory & Badge */}
-                        <div className="flex items-center justify-between">
-                          <span className="text-[10px] font-bold text-[#707973] uppercase tracking-wider">
-                            {service.subcategory}
-                          </span>
-                          <div className="flex items-center space-x-1.5">
-                            <span className="text-[10px] font-bold text-[#003523] bg-[#c0edd3]/30 px-2 py-0.5 rounded">
-                              {pricing.badgeLabel}
-                            </span>
-                            {service.badge && (
-                              <span className="text-[10px] font-bold text-[#904d00] bg-[#ffdcc3] px-2 py-0.5 rounded">
-                                {service.badge}
-                              </span>
-                            )}
-                          </div>
-                        </div>
-
-                        {/* Service Title & Plain Description */}
-                        <div>
-                          <h3 className="text-base font-extrabold text-[#131b2e] leading-snug group-hover:text-[#003523] transition-colors">
-                            {service.name}
-                          </h3>
-                          <p className="text-xs text-[#404943] line-clamp-2 mt-1 leading-relaxed">
-                            {service.description}
-                          </p>
-                        </div>
-
-                        {/* Rating (when real) & Duration & Guarantee */}
-                        <div className="flex items-center space-x-3 text-xs text-[#707973]">
-                          {service.rating ? (
-                            <div className="flex items-center space-x-1 text-[#fe932c] font-bold">
-                              <Star className="w-3.5 h-3.5 fill-[#fe932c]" />
-                              <span>{service.rating}</span>
-                              {service.completedBookingsCount && (
-                                <span className="text-[#707973] font-normal">
-                                  ({service.completedBookingsCount})
-                                </span>
-                              )}
-                            </div>
-                          ) : (
-                            <span className="text-[#003523] font-semibold text-[11px]">
-                              Verified Artisan
-                            </span>
-                          )}
-                          <span>·</span>
-                          <div className="flex items-center space-x-1">
-                            <Clock className="w-3 h-3 text-[#003523]" />
-                            <span>{service.duration || service.estimatedDuration || '45-60 mins'}</span>
-                          </div>
-                        </div>
-
-                        {/* Inclusions summary */}
-                        {inclusions.length > 0 && (
-                          <div className="p-2.5 rounded-lg bg-[#faf8ff] border border-[#c0c9c2]/30 space-y-1">
-                            <span className="text-[10px] font-bold text-[#131b2e] uppercase block">
-                              What's Included:
-                            </span>
-                            {inclusions.map((inc, i) => (
-                              <div key={i} className="flex items-start space-x-1.5 text-[11px] text-[#404943]">
-                                <Check className="w-3 h-3 text-[#003523] shrink-0 mt-0.5" />
-                                <span className="line-clamp-1">{inc}</span>
-                              </div>
-                            ))}
-                          </div>
-                        )}
-                      </div>
-
-                      {/* Pricing Card Bottom Action Area */}
-                      <div className="pt-4 border-t border-[#c0c9c2]/40 flex items-center justify-between mt-4">
-                        <div>
-                          {pricing.isQuoteRequired ? (
-                            <div>
-                              <span className="text-base font-black text-[#003523]">
-                                Request Quote
-                              </span>
-                              <div className="text-[10px] text-[#707973]">
-                                {pricing.visitFeeText}
-                              </div>
-                            </div>
-                          ) : (
-                            <div>
-                              <div className="flex items-baseline space-x-1.5">
-                                <span className="text-xl font-black text-[#003523]">
-                                  {pricing.priceFormatted}
-                                </span>
-                                {pricing.originalPriceFormatted && (
-                                  <span className="text-xs text-[#707973] line-through">
-                                    {pricing.originalPriceFormatted}
-                                  </span>
-                                )}
-                              </div>
-                              <div className="text-[10px] text-[#707973]">
-                                {pricing.visitFeeText}
-                              </div>
-                            </div>
-                          )}
-                        </div>
-
-                        <div className="flex items-center space-x-2">
-                          <button
-                            onClick={() => setSelectedDetailServiceId(service.id)}
-                            className="p-2 rounded-lg text-[#707973] hover:text-[#131b2e] hover:bg-[#eaedff] transition-colors"
-                            title="View Full Scope & Policy"
-                          >
-                            <Info className="w-4 h-4" />
-                          </button>
-
-                          {pricing.isQuoteRequired ? (
-                            <button
-                              onClick={() => setIsCustomTaskModalOpen(true)}
-                              className="px-4 py-2 rounded-lg bg-[#003523] hover:bg-[#144d37] text-white font-bold text-xs flex items-center space-x-1 shadow-xs active:scale-98 transition-all"
-                            >
-                              <span>Request Quote</span>
-                              <ArrowRight className="w-3.5 h-3.5 ml-1" />
-                            </button>
-                          ) : count > 0 ? (
-                            <div className="flex items-center bg-[#003523] text-white rounded-lg p-1 space-x-1 shadow-xs">
-                              <button
-                                onClick={() => updateCartQuantity(service.id, -1)}
-                                className="w-6 h-6 flex items-center justify-center font-bold text-xs hover:bg-[#144d37] rounded"
-                              >
-                                <Minus className="w-3.5 h-3.5" />
-                              </button>
-                              <span className="text-xs font-bold px-2">{count}</span>
-                              <button
-                                onClick={() => updateCartQuantity(service.id, 1)}
-                                className="w-6 h-6 flex items-center justify-center font-bold text-xs hover:bg-[#144d37] rounded"
-                              >
-                                <Plus className="w-3.5 h-3.5" />
-                              </button>
-                            </div>
-                          ) : (
-                            <button
-                              onClick={() => addToCart(service, 1)}
-                              className="px-4 py-2 rounded-lg bg-[#003523] hover:bg-[#144d37] text-white font-bold text-xs flex items-center space-x-1 shadow-xs active:scale-98 transition-all"
-                            >
-                              <Plus className="w-3.5 h-3.5" />
-                              <span>{pricing.ctaText}</span>
-                            </button>
-                          )}
-                        </div>
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            )}
-          </div>
-        )}
-      </section>
-
-      {/* 8. Local Operations Desk Card (Physical Credibility) */}
-      <section className="max-w-7xl mx-auto px-4 sm:px-6">
-        <div className="bg-white rounded-xl border border-[#c0c9c2]/70 p-6 sm:p-8 shadow-xs flex flex-col md:flex-row items-start md:items-center justify-between gap-6">
-          <div className="space-y-2 max-w-2xl">
-            <div className="flex items-center space-x-2 text-xs font-bold text-[#003523]">
-              <MapPin className="w-4 h-4 text-[#fe932c]" />
-              <span className="uppercase tracking-wider">Physical Presence · Kharar Operations Hub</span>
-            </div>
-            <h3 className="text-xl sm:text-2xl font-black text-[#131b2e]">
-              A Real Local Team Behind Every Doorstep Visit
-            </h3>
-            <p className="text-xs sm:text-sm text-[#404943] leading-relaxed">
-              We operate an on-ground office at SCF 14, Sector 125, Sunny Enclave, Kharar. When you book a service, our dispatch supervisor personally reviews the problem, verifies the required tools, and ensures our artisan carries retail shop MRP receipts for any spare parts.
-            </p>
-            <div className="flex flex-wrap items-center gap-3 pt-1 text-xs text-[#131b2e] font-semibold">
-              <span className="flex items-center space-x-1 text-[#003523]">
-                <CheckCircle2 className="w-3.5 h-3.5 text-[#003523]" />
-                <span>Background Verified Artisans</span>
-              </span>
-              <span>·</span>
-              <span className="flex items-center space-x-1 text-[#003523]">
-                <CheckCircle2 className="w-3.5 h-3.5 text-[#003523]" />
-                <span>Transparent MRP Billing</span>
-              </span>
-              <span>·</span>
-              <span className="flex items-center space-x-1 text-[#003523]">
-                <CheckCircle2 className="w-3.5 h-3.5 text-[#003523]" />
-                <span>30-Day Workmanship Warranty</span>
-              </span>
-            </div>
-          </div>
-
-          <div className="shrink-0 flex flex-col sm:flex-row md:flex-col gap-2 w-full md:w-auto">
-            <a
-              href="tel:+918284018909"
-              className="px-5 py-3 rounded-xl bg-[#003523] hover:bg-[#144d37] text-white text-xs font-bold flex items-center justify-center space-x-2 shadow-xs transition-all"
-            >
-              <Phone className="w-4 h-4 text-[#fe932c]" />
-              <span>Call Dispatch: +91 82840 18909</span>
-            </a>
-            <button
-              onClick={() => setIsCustomTaskModalOpen(true)}
-              className="px-5 py-3 rounded-xl border border-[#c0c9c2] hover:border-[#003523] bg-[#faf8ff] text-xs font-bold text-[#131b2e] flex items-center justify-center space-x-1.5 transition-all"
-            >
-              <span>Describe Unique Problem</span>
-            </button>
-          </div>
-        </div>
-      </section>
-
-      {/* Service Available Zones & Locations: Sectors 94 to 111 */}
-      <section className="max-w-7xl mx-auto px-4 sm:px-6 space-y-5">
-        <div className="flex flex-col md:flex-row md:items-end justify-between gap-3">
-          <div className="space-y-1">
-            <div className="flex items-center space-x-2 text-xs font-bold text-[#003523]">
-              <span className="w-2 h-2 rounded-full bg-[#fe932c] animate-pulse"></span>
-              <span className="uppercase tracking-wider">Active Doorstep Coverage</span>
-            </div>
-            <h2 className="text-xl sm:text-2xl font-black text-[#131b2e]">
-              Service Available Zones & Locations (Sectors 94 to 111)
-            </h2>
-            <p className="text-xs text-[#707973] max-w-2xl">
-              Dedicated vans and verified local artisans positioned across every GMADA, Emaar, TDI, and JLPL residential corridor for fast ~20–30 min arrival.
-            </p>
-          </div>
-
-          <button
-            onClick={() => setIsLocalityModalOpen(true)}
-            className="self-start md:self-auto px-4 py-2 rounded-xl bg-[#003523] hover:bg-[#144d37] text-white text-xs font-bold flex items-center space-x-1.5 shadow-xs transition-all"
-          >
-            <MapPin className="w-3.5 h-3.5 text-[#fe932c]" />
-            <span>Select Sector ({currentLocality})</span>
-          </button>
-        </div>
-
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3.5">
-          {SERVICE_AVAILABLE_ZONES.map((zone) => {
-            const isCurrent = currentLocality === zone.name || currentLocality === zone.sector;
-            return (
-              <div
-                key={zone.id}
-                className={`p-4 rounded-2xl border transition-all flex flex-col justify-between space-y-3 ${
-                  isCurrent
-                    ? 'bg-[#c0edd3]/20 border-[#003523] ring-1 ring-[#003523] shadow-xs'
-                    : 'bg-white border-[#c0c9c2]/60 hover:border-[#003523]/60 hover:shadow-xs'
-                }`}
-              >
-                <div className="space-y-2">
-                  <div className="flex items-center justify-between">
-                    <span className="text-xs font-black px-2.5 py-1 rounded-lg bg-[#003523] text-white tracking-wide">
-                      {zone.sector}
-                    </span>
-                    <span className="text-[11px] font-bold text-[#003523] flex items-center space-x-1">
-                      <Clock className="w-3 h-3 text-[#fe932c]" />
-                      <span>~{zone.avgResponseMinutes} min ETA</span>
-                    </span>
-                  </div>
-
-                  <h3 className="font-bold text-sm text-[#131b2e]">
-                    {zone.name}
-                  </h3>
-
-                  <p className="text-xs text-[#404943] leading-relaxed">
-                    {zone.description}
-                  </p>
-
-                  <div className="flex flex-wrap gap-1.5 pt-1">
-                    {zone.keyEnclaves.map((enc) => (
-                      <span
-                        key={enc}
-                        className="text-[10px] bg-[#f2f3ff] text-[#404943] font-semibold px-2 py-0.5 rounded-full border border-[#c0c9c2]/40"
-                      >
-                        {enc}
-                      </span>
-                    ))}
-                  </div>
-                </div>
-
-                <div className="pt-2 border-t border-[#c0c9c2]/30 flex items-center justify-between">
-                  <span className="text-[11px] text-[#707973]">
-                    {zone.activeArtisansCount} verified pros active
-                  </span>
-
-                  <button
-                    onClick={() => {
-                      setCurrentLocality(zone.name);
-                      showToast(`Selected ${zone.sector} as your active service zone.`, 'info');
-                    }}
-                    className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${
-                      isCurrent
-                        ? 'bg-[#003523] text-white'
-                        : 'border border-[#003523] text-[#003523] hover:bg-[#c0edd3]/25'
-                    }`}
-                  >
-                    {isCurrent ? 'Active Sector' : 'Select Sector'}
-                  </button>
-                </div>
-              </div>
-            );
-          })}
-        </div>
-      </section>
-
-      {/* 9. Frequently Asked Questions */}
-      <section className="max-w-7xl mx-auto px-4 sm:px-6 space-y-4">
+      {/* =========================================================
+          5. HOW IT WORKS (3 Simple Steps)
+          ========================================================= */}
+      <section className="max-w-7xl mx-auto px-4 sm:px-6 space-y-6">
         <div className="text-center max-w-xl mx-auto space-y-1">
-          <h2 className="text-xl font-extrabold text-[#131b2e]">
-            Frequently Asked Questions
+          <h2 className="text-xl sm:text-2xl font-bold text-[#1A1A1A] tracking-tight">
+            How UrbanCare Works
           </h2>
-          <p className="text-xs text-[#707973]">
-            Clear, honest answers about our pricing, dispatch model, and warranty
+          <p className="text-xs sm:text-sm text-gray-500">
+            Simple 3-step home service booking with zero advance payment
           </p>
         </div>
 
-        <div className="max-w-3xl mx-auto space-y-2">
-          {catalogueFaqs.map((faq, idx) => {
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4 sm:gap-6">
+          {/* Step 1 */}
+          <div className="bg-white rounded-2xl border border-gray-200/90 p-5 sm:p-6 shadow-xs flex flex-col justify-between space-y-3">
+            <div className="space-y-3">
+              <div className="w-10 h-10 rounded-xl bg-[#0F3D2E]/10 text-[#0F3D2E] flex items-center justify-center font-black text-base">
+                1
+              </div>
+              <h3 className="font-bold text-base text-[#1A1A1A]">
+                Choose Service & Time Slot
+              </h3>
+              <p className="text-xs sm:text-sm text-gray-600 leading-relaxed">
+                Select your repair and preferred doorstep visit slot online in under 60 seconds.
+              </p>
+            </div>
+            <div className="pt-2 text-[11px] font-semibold text-[#0F3D2E] flex items-center space-x-1">
+              <Calendar className="w-3.5 h-3.5" />
+              <span>Instant slot confirmation</span>
+            </div>
+          </div>
+
+          {/* Step 2 */}
+          <div className="bg-white rounded-2xl border border-gray-200/90 p-5 sm:p-6 shadow-xs flex flex-col justify-between space-y-3">
+            <div className="space-y-3">
+              <div className="w-10 h-10 rounded-xl bg-[#F28C28]/20 text-[#A85800] flex items-center justify-center font-black text-base">
+                2
+              </div>
+              <h3 className="font-bold text-base text-[#1A1A1A]">
+                Technician Arrives in {PRICING_CONFIG.etaStandard}
+              </h3>
+              <p className="text-xs sm:text-sm text-gray-600 leading-relaxed">
+                Background-verified technician arrives with diagnostic tools and retail shop MRP hardware.
+              </p>
+            </div>
+            <div className="pt-2 text-[11px] font-semibold text-[#0F3D2E] flex items-center space-x-1">
+              <Clock className="w-3.5 h-3.5" />
+              <span>Local dispatch from Kharar</span>
+            </div>
+          </div>
+
+          {/* Step 3 */}
+          <div className="bg-white rounded-2xl border border-gray-200/90 p-5 sm:p-6 shadow-xs flex flex-col justify-between space-y-3">
+            <div className="space-y-3">
+              <div className="w-10 h-10 rounded-xl bg-[#0F3D2E]/10 text-[#0F3D2E] flex items-center justify-center font-black text-base">
+                3
+              </div>
+              <h3 className="font-bold text-base text-[#1A1A1A]">
+                Inspect Work & Pay ₹0 Advance
+              </h3>
+              <p className="text-xs sm:text-sm text-gray-600 leading-relaxed">
+                Test the completed repair in your home first, then pay directly via UPI, Card, or Cash.
+              </p>
+            </div>
+            <div className="pt-2 text-[11px] font-semibold text-[#0F3D2E] flex items-center space-x-1">
+              <CreditCard className="w-3.5 h-3.5" />
+              <span>Backed by 30-Day Warranty</span>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      {/* =========================================================
+          6. WHY URBANCARE
+          Merged local-team and physical-presence blocks.
+          4 Key pillars: Local Team, ₹0 Advance, 30-Day Warranty, MRP Billing
+          ========================================================= */}
+      <section className="max-w-7xl mx-auto px-4 sm:px-6">
+        <div className="bg-white rounded-2xl border border-gray-200/90 p-6 sm:p-8 shadow-xs space-y-6">
+          <div className="max-w-2xl space-y-2">
+            <span className="text-xs font-bold text-[#0F3D2E] uppercase tracking-wider">
+              Why UrbanCare Solution
+            </span>
+            <h2 className="text-xl sm:text-2xl font-bold text-[#1A1A1A] tracking-tight">
+              A Real Local Team Behind Every Visit
+            </h2>
+            <p className="text-xs sm:text-sm text-gray-600 leading-relaxed">
+              Unlike algorithmic platforms that blindly hand tasks to unvetted strangers, we operate an on-ground center in Kharar and stand by every home visit.
+            </p>
+          </div>
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 pt-2">
+            {/* Pillar 1 */}
+            <div className="p-4 rounded-xl bg-gray-50/80 border border-gray-100 space-y-2">
+              <div className="w-9 h-9 rounded-lg bg-white border border-gray-200 flex items-center justify-center text-[#0F3D2E]">
+                <Building2 className="w-4 h-4" />
+              </div>
+              <h4 className="font-bold text-sm text-[#1A1A1A]">
+                Physical Kharar Office
+              </h4>
+              <p className="text-xs text-gray-600 leading-relaxed">
+                Office at SCF 14, Sunny Enclave, Sector 125. Real supervisors you can call or visit anytime.
+              </p>
+            </div>
+
+            {/* Pillar 2 */}
+            <div className="p-4 rounded-xl bg-gray-50/80 border border-gray-100 space-y-2">
+              <div className="w-9 h-9 rounded-lg bg-white border border-gray-200 flex items-center justify-center text-[#0F3D2E]">
+                <CheckCircle2 className="w-4 h-4" />
+              </div>
+              <h4 className="font-bold text-sm text-[#1A1A1A]">
+                ₹0 Advance Payment
+              </h4>
+              <p className="text-xs text-gray-600 leading-relaxed">
+                You never pay before work starts. Inspect the repair in your home, test it thoroughly, then pay.
+              </p>
+            </div>
+
+            {/* Pillar 3 */}
+            <div className="p-4 rounded-xl bg-gray-50/80 border border-gray-100 space-y-2">
+              <div className="w-9 h-9 rounded-lg bg-white border border-gray-200 flex items-center justify-center text-[#0F3D2E]">
+                <ShieldCheck className="w-4 h-4" />
+              </div>
+              <h4 className="font-bold text-sm text-[#1A1A1A]">
+                30-Day Warranty
+              </h4>
+              <p className="text-xs text-gray-600 leading-relaxed">
+                If the serviced appliance or joint acts up within 30 days, we fix it with zero extra labor charge.
+              </p>
+            </div>
+
+            {/* Pillar 4 */}
+            <div className="p-4 rounded-xl bg-gray-50/80 border border-gray-100 space-y-2">
+              <div className="w-9 h-9 rounded-lg bg-white border border-gray-200 flex items-center justify-center text-[#0F3D2E]">
+                <Receipt className="w-4 h-4" />
+              </div>
+              <h4 className="font-bold text-sm text-[#1A1A1A]">
+                Genuine Retail MRP
+              </h4>
+              <p className="text-xs text-gray-600 leading-relaxed">
+                Capacitors, valves, and wires are billed at exact shop retail MRP with store receipts.
+              </p>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      {/* =========================================================
+          7. SECTOR CHECKER
+          Replaces the 12 sector cards with a single interactive checker
+          ========================================================= */}
+      <section className="max-w-7xl mx-auto px-4 sm:px-6">
+        <div className="bg-[#F8FAF9] rounded-2xl border border-gray-200 p-6 sm:p-8 shadow-xs space-y-6">
+          <div className="max-w-xl space-y-1.5">
+            <div className="flex items-center space-x-2 text-xs font-bold text-[#0F3D2E]">
+              <MapPin className="w-4 h-4 text-[#F28C28]" />
+              <span className="uppercase tracking-wider">Fast Local Dispatch</span>
+            </div>
+            <h2 className="text-xl sm:text-2xl font-bold text-[#1A1A1A] tracking-tight">
+              Check If We Serve Your Sector
+            </h2>
+            <p className="text-xs sm:text-sm text-gray-600">
+              Select your sector or Mohali pocket to see live technician availability and arrival ETA.
+            </p>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-6 items-center">
+            {/* Left: Interactive Dropdown & Pincode Selector */}
+            <div className="space-y-4">
+              <div>
+                <label className="block text-xs font-bold text-gray-700 mb-1.5">
+                  Select Sector / Area
+                </label>
+                <div className="relative">
+                  <select
+                    value={selectedZoneId}
+                    onChange={(e) => setSelectedZoneId(e.target.value)}
+                    className="w-full appearance-none px-4 py-3.5 rounded-xl border border-gray-300 bg-white text-sm font-semibold text-[#1A1A1A] focus:border-[#0F3D2E] focus:ring-2 focus:ring-[#0F3D2E]/15 focus:outline-none cursor-pointer"
+                  >
+                    {SERVICE_AVAILABLE_ZONES.map((zone) => (
+                      <option key={zone.id} value={zone.id}>
+                        {zone.name}
+                      </option>
+                    ))}
+                  </select>
+                  <ChevronDown className="w-4 h-4 text-gray-500 absolute right-4 top-4 pointer-events-none" />
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-gray-600 mb-1">
+                  Or enter Pincode (e.g. 140301, 140307, 160055)
+                </label>
+                <input
+                  type="text"
+                  value={pincodeQuery}
+                  onChange={(e) => setPincodeQuery(e.target.value)}
+                  placeholder="Enter 6-digit Pincode..."
+                  className="w-full px-4 py-2.5 rounded-xl border border-gray-200 bg-white text-xs text-gray-800 placeholder:text-gray-400 focus:border-[#0F3D2E] focus:outline-none"
+                />
+              </div>
+            </div>
+
+            {/* Right: Live Coverage Status Card */}
+            <div className="bg-white rounded-2xl border border-emerald-200 p-5 space-y-4 shadow-xs">
+              <div className="flex items-center justify-between pb-3 border-b border-gray-100">
+                <div className="flex items-center space-x-2">
+                  <span className="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-pulse" />
+                  <span className="text-xs font-bold text-emerald-800 uppercase tracking-wide">
+                    Live Doorstep Coverage
+                  </span>
+                </div>
+                <span className="text-xs font-bold text-[#0F3D2E] bg-emerald-50 px-2.5 py-1 rounded-md">
+                  ~{activeZone.avgResponseMinutes || 30} min ETA
+                </span>
+              </div>
+
+              <div className="space-y-1">
+                <h3 className="font-bold text-base text-[#1A1A1A]">
+                  {activeZone.name}
+                </h3>
+                <p className="text-xs text-gray-600 leading-relaxed">
+                  {activeZone.description}
+                </p>
+              </div>
+
+              <div className="flex items-center justify-between text-xs pt-1">
+                <span className="font-semibold text-gray-700 flex items-center space-x-1">
+                  <UserCheck className="w-4 h-4 text-[#0F3D2E]" />
+                  <span>{activeZone.activeArtisansCount} Verified Pros active</span>
+                </span>
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    setCurrentLocality(activeZone.name);
+                    setCurrentPage('services');
+                    showToast(`Active sector updated to ${activeZone.sector}`, 'success');
+                    window.scrollTo({ top: 0, behavior: 'smooth' });
+                  }}
+                  className="px-4 py-2.5 rounded-xl bg-[#F28C28] hover:bg-[#d9771e] text-[#0F3D2E] font-bold text-xs min-h-[44px] transition-all active:scale-[0.98] cursor-pointer"
+                >
+                  Book in {activeZone.sector}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      {/* =========================================================
+          8. CUSTOMER REVIEWS
+          Real data from the project (INITIAL_REVIEWS)
+          ========================================================= */}
+      <section className="max-w-7xl mx-auto px-4 sm:px-6 space-y-6">
+        <div className="text-center max-w-xl mx-auto space-y-1">
+          <h2 className="text-xl sm:text-2xl font-bold text-[#1A1A1A] tracking-tight">
+            Loved by Mohali & Kharar Residents
+          </h2>
+          <p className="text-xs sm:text-sm text-gray-500">
+            Real feedback from verified homeowners in Sectors 94–111
+          </p>
+        </div>
+
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4 sm:gap-6">
+          {reviews && reviews.length > 0 ? (
+            reviews.map((rev) => (
+              <div
+                key={rev.id}
+                className="bg-white rounded-2xl border border-gray-200/90 p-5 sm:p-6 shadow-xs flex flex-col justify-between space-y-4"
+              >
+                <div className="space-y-3">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center space-x-1">
+                      {[...Array(rev.rating || 5)].map((_, i) => (
+                        <Star
+                          key={i}
+                          className="w-4 h-4 fill-amber-500 text-amber-500"
+                        />
+                      ))}
+                    </div>
+                    <span className="text-[11px] text-gray-400 font-medium">
+                      {rev.timestamp}
+                    </span>
+                  </div>
+
+                  <p className="text-xs sm:text-sm text-gray-700 leading-relaxed italic">
+                    "{rev.review}"
+                  </p>
+                </div>
+
+                <div className="pt-3 border-t border-gray-100 flex items-center justify-between text-xs">
+                  <div>
+                    <div className="font-bold text-[#1A1A1A]">{rev.customerName}</div>
+                    <div className="text-[11px] text-gray-500">{rev.locality}</div>
+                  </div>
+                  <span className="text-[10px] font-semibold text-emerald-800 bg-emerald-50 px-2 py-0.5 rounded-md">
+                    {rev.serviceName}
+                  </span>
+                </div>
+              </div>
+            ))
+          ) : (
+            /* Clear placeholder if no reviews exist */
+            <div className="col-span-3 p-8 text-center bg-gray-50 rounded-2xl border border-dashed border-gray-300 text-gray-500 text-xs">
+              Verified customer feedback will display here once completed orders are submitted.
+            </div>
+          )}
+        </div>
+      </section>
+
+      {/* =========================================================
+          9. FREQUENTLY ASKED QUESTIONS (Accordion)
+          Consistent pricing rule and single ETA statement
+          ========================================================= */}
+      <section className="max-w-4xl mx-auto px-4 sm:px-6 space-y-5">
+        <div className="text-center space-y-1">
+          <h2 className="text-xl sm:text-2xl font-bold text-[#1A1A1A] tracking-tight">
+            Frequently Asked Questions
+          </h2>
+          <p className="text-xs sm:text-sm text-gray-500">
+            Clear, honest answers about inspection charges, warranty, and visits
+          </p>
+        </div>
+
+        <div className="space-y-2.5">
+          {faqs.map((faq, idx) => {
             const isOpen = activeFaqIndex === idx;
             return (
               <div
                 key={idx}
-                className="bg-white rounded-xl border border-[#c0c9c2]/50 overflow-hidden shadow-xs"
+                className="bg-white rounded-2xl border border-gray-200/90 overflow-hidden shadow-xs transition-colors"
               >
                 <button
                   type="button"
                   onClick={() => setActiveFaqIndex(isOpen ? null : idx)}
-                  className="w-full p-4 text-left flex items-center justify-between text-xs sm:text-sm font-bold text-[#131b2e] hover:bg-[#faf8ff] transition-colors"
+                  className="w-full p-4 sm:p-5 text-left flex items-center justify-between text-xs sm:text-sm font-bold text-[#1A1A1A] hover:bg-gray-50/70 transition-colors cursor-pointer"
                 >
-                  <span>{faq.q}</span>
+                  <span className="pr-4">{faq.q}</span>
                   {isOpen ? (
-                    <ChevronUp className="w-4 h-4 text-[#707973] shrink-0" />
+                    <ChevronUp className="w-4 h-4 text-gray-500 shrink-0" />
                   ) : (
-                    <ChevronDown className="w-4 h-4 text-[#707973] shrink-0" />
+                    <ChevronDown className="w-4 h-4 text-gray-500 shrink-0" />
                   )}
                 </button>
                 {isOpen && (
-                  <div className="px-4 pb-4 pt-1 text-xs text-[#404943] leading-relaxed border-t border-[#c0c9c2]/20">
+                  <div className="px-4 sm:px-5 pb-5 pt-1 text-xs sm:text-sm text-gray-600 leading-relaxed border-t border-gray-100">
                     {faq.a}
                   </div>
                 )}
@@ -1048,18 +932,6 @@ export const HomePage: React.FC = () => {
           })}
         </div>
       </section>
-
-      {/* View All Services Modal */}
-      <ViewAllServicesModal
-        isOpen={isViewAllModalOpen}
-        onClose={() => setIsViewAllModalOpen(false)}
-        onSelectCategory={(catName) => {
-          setSelectedCategory(catName);
-          setSelectedSubcategory('All');
-          const el = document.getElementById('services-catalog-view');
-          if (el) el.scrollIntoView({ behavior: 'smooth' });
-        }}
-      />
     </div>
   );
 };

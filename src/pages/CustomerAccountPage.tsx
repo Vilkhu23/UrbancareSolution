@@ -1,5 +1,10 @@
 import React, { useState } from 'react';
 import { useApp } from '../context/AppContext';
+import { CustomerOtpDisplay } from '../components/customer/CustomerOtpDisplay';
+import { supabase, isSupabaseConfigured } from '../lib/supabase';
+import { LOCALITIES } from '../data/initialData';
+import { validateIndianPhone } from '../utils/authValidation';
+import { checkPhoneAvailableViaRpc } from '../services/supabaseService';
 import {
   ClipboardList,
   MapPin,
@@ -22,7 +27,11 @@ import {
   Building,
   PhoneCall,
   Bell,
-  Sparkles
+  Sparkles,
+  LogOut,
+  Edit3,
+  X,
+  Save
 } from 'lucide-react';
 
 export const CustomerAccountPage: React.FC = () => {
@@ -32,23 +41,179 @@ export const CustomerAccountPage: React.FC = () => {
     setActiveTrackingRequestId,
     currentLocality,
     currentUser,
+    setCurrentUser,
+    setCurrentPage,
     setIsAuthModalOpen,
     logoutCustomer,
+    showToast,
     dpdpConsent,
     dpdpNominee,
     dpdpGrievances,
     exportPersonalData,
     setIsDPDPNoticeOpen,
     setIsDPDPConsentManagerOpen,
-    setIsDPDPDataRightsOpen
+    setIsDPDPDataRightsOpen,
+    isLoadingData,
+    dataLoadError
   } = useApp();
 
   const [activeTab, setActiveTab] = useState<'bookings' | 'projects' | 'addresses' | 'dpdp'>('bookings');
 
+  // Customer profile edit modal state
+  const [isEditProfileOpen, setIsEditProfileOpen] = useState(false);
+  const [editName, setEditName] = useState('');
+  const [editPhone, setEditPhone] = useState('');
+  const [editLocality, setEditLocality] = useState('');
+  const [editAddress, setEditAddress] = useState('');
+  const [isSavingProfile, setIsSavingProfile] = useState(false);
+  const [profileError, setProfileError] = useState<string | null>(null);
+
+  // If user is not logged in (e.g. after logout or back-button navigation),
+  // strictly prevent private data exposure and render a clean auth prompt.
+  if (!currentUser) {
+    return (
+      <div className="max-w-md mx-auto my-16 p-8 bg-white rounded-3xl border border-gray-200 shadow-xl text-center space-y-4 animate-scaleUp">
+        <div className="w-14 h-14 bg-emerald-50 text-[#003523] rounded-2xl flex items-center justify-center mx-auto border border-emerald-100">
+          <User className="w-7 h-7" />
+        </div>
+        <h2 className="text-lg font-bold text-[#131b2e]">Resident Sign In Required</h2>
+        <p className="text-xs text-[#707973] leading-relaxed">
+          Please sign in to view your resident profile, active booking status, and warranty records.
+        </p>
+        <div className="pt-2 flex flex-col sm:flex-row items-center justify-center gap-2">
+          <button
+            onClick={() => setCurrentPage('home')}
+            className="w-full sm:w-auto px-4 py-2.5 rounded-xl bg-gray-100 hover:bg-gray-200 text-[#131b2e] text-xs font-semibold transition-colors cursor-pointer"
+          >
+            Return to Home
+          </button>
+          <button
+            onClick={() => setIsAuthModalOpen(true)}
+            className="w-full sm:w-auto px-4 py-2.5 rounded-xl bg-[#003523] hover:bg-[#144d37] text-white text-xs font-bold transition-all shadow-xs cursor-pointer"
+          >
+            Sign In / Register
+          </button>
+        </div>
+      </div>
+    );
+  }
+
   // Customer initials
-  const initials = currentUser
-    ? currentUser.name.split(' ').map((n) => n[0]).slice(0, 2).join('')
-    : 'PB';
+  const initials = currentUser.name
+    .split(' ')
+    .map((n) => n[0])
+    .slice(0, 2)
+    .join('');
+
+  const openEditModal = () => {
+    setEditName(currentUser.name);
+    setEditPhone(currentUser.phone);
+    setEditLocality(currentUser.locality || currentLocality);
+    setEditAddress(currentUser.address || '');
+    setProfileError(null);
+    setIsEditProfileOpen(true);
+  };
+
+  const handleSaveProfile = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setProfileError(null);
+
+    if (!editName.trim()) {
+      setProfileError('Full name is required.');
+      return;
+    }
+
+    const phoneVal = validateIndianPhone(editPhone);
+    if (!phoneVal.isValid) {
+      setProfileError(phoneVal.message || 'Please enter a valid 10-digit mobile number starting with 6-9 (+91).');
+      return;
+    }
+
+    setIsSavingProfile(true);
+
+    try {
+      // If phone number changed, pre-check availability via check_phone_available RPC
+      if (phoneVal.formatted !== currentUser.phone) {
+        const isAvailable = await checkPhoneAvailableViaRpc(phoneVal.formatted);
+        if (!isAvailable) {
+          const msg = 'This mobile number is already registered. Please log in, or contact support if this is not you.';
+          setProfileError(msg);
+          showToast(msg, 'error');
+          setIsSavingProfile(false);
+          return;
+        }
+      }
+
+      if (isSupabaseConfigured()) {
+        const { error: profileErrorResponse } = await supabase
+          .from('profiles')
+          .update({
+            full_name: editName.trim(),
+            phone: phoneVal.formatted,
+            locality: editLocality,
+            address: editAddress.trim(),
+            updated_at: new Date().toISOString()
+          })
+          .eq('id', currentUser.id);
+
+        if (profileErrorResponse) {
+          if (
+            profileErrorResponse.message?.includes('PHONE_ALREADY_REGISTERED') ||
+            profileErrorResponse.message?.includes('idx_profiles_phone_normalized') ||
+            profileErrorResponse.message?.toLowerCase().includes('duplicate')
+          ) {
+            const msg = 'This mobile number is already registered. Please log in, or contact support if this is not you.';
+            setProfileError(msg);
+            showToast(msg, 'error');
+          } else {
+            setProfileError(profileErrorResponse.message);
+            showToast(profileErrorResponse.message, 'error');
+          }
+          setIsSavingProfile(false);
+          return;
+        }
+
+        // Also update customers row if exists
+        await supabase
+          .from('customers')
+          .update({
+            name: editName.trim(),
+            phone: phoneVal.formatted,
+            locality: editLocality,
+            address: editAddress.trim()
+          })
+          .eq('user_id', currentUser.id);
+      }
+
+      // Update in-memory user record
+      setCurrentUser({
+        ...currentUser,
+        name: editName.trim(),
+        phone: phoneVal.formatted,
+        locality: editLocality,
+        address: editAddress.trim()
+      });
+
+      showToast('Profile details updated successfully!', 'success');
+      setIsEditProfileOpen(false);
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : 'Failed to update profile.';
+      if (
+        msg.includes('PHONE_ALREADY_REGISTERED') ||
+        msg.includes('idx_profiles_phone_normalized') ||
+        msg.toLowerCase().includes('duplicate')
+      ) {
+        const dupMsg = 'This mobile number is already registered. Please log in, or contact support if this is not you.';
+        setProfileError(dupMsg);
+        showToast(dupMsg, 'error');
+      } else {
+        setProfileError(msg);
+        showToast(msg, 'error');
+      }
+    } finally {
+      setIsSavingProfile(false);
+    }
+  };
 
   return (
     <div className="max-w-7xl mx-auto px-4 sm:px-6 py-8 space-y-6 pb-24">
@@ -61,44 +226,157 @@ export const CustomerAccountPage: React.FC = () => {
           <div>
             <div className="flex items-center space-x-2">
               <h1 className="text-xl font-bold text-[#131b2e]">
-                {currentUser ? currentUser.name : 'Guest Resident'}
+                {currentUser.name}
               </h1>
-              {currentUser && (
-                <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-[#c0edd3] text-[#003523]">
-                  {currentUser.status || 'ACTIVE'}
-                </span>
-              )}
+              <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-[#c0edd3] text-[#003523]">
+                {currentUser.status || 'ACTIVE'}
+              </span>
             </div>
             <p className="text-xs text-[#707973]">
-              {currentUser ? `${currentUser.phone} · ${currentUser.locality || currentLocality}` : `Not logged in · ${currentLocality}`}
+              {`${currentUser.phone} · ${currentUser.locality || currentLocality}`}
             </p>
           </div>
         </div>
 
-        <div className="flex items-center space-x-2">
-          {currentUser ? (
-            <div className="flex items-center space-x-2">
-              <button
-                onClick={() => setIsAuthModalOpen(true)}
-                className="text-xs font-semibold px-3 py-1.5 rounded-xl border border-[#c0c9c2]/60 hover:bg-[#f2f3ff] text-[#131b2e] transition-colors"
-              >
-                Switch Account
-              </button>
-              <div className="flex items-center space-x-1.5 text-xs font-semibold text-[#003523] bg-[#c0edd3]/25 px-3 py-1.5 rounded-xl border border-[#b6efd1]">
-                <ShieldCheck className="w-4 h-4 text-[#003523]" />
-                <span>Verified Resident</span>
-              </div>
-            </div>
-          ) : (
-            <button
-              onClick={() => setIsAuthModalOpen(true)}
-              className="px-4 py-2 rounded-xl bg-[#003523] hover:bg-[#144d37] text-white font-bold text-xs shadow-xs transition-colors"
-            >
-              Sign In / Register
-            </button>
-          )}
+        <div className="flex items-center space-x-2 flex-wrap gap-y-2">
+          <button
+            onClick={openEditModal}
+            className="text-xs font-semibold px-3 py-1.5 rounded-xl border border-[#c0c9c2]/60 hover:bg-[#f2f3ff] text-[#131b2e] transition-colors flex items-center space-x-1.5 cursor-pointer"
+          >
+            <Edit3 className="w-3.5 h-3.5 text-gray-600" />
+            <span>Edit Profile</span>
+          </button>
+
+          <button
+            onClick={() => setIsAuthModalOpen(true)}
+            className="text-xs font-semibold px-3 py-1.5 rounded-xl border border-[#c0c9c2]/60 hover:bg-[#f2f3ff] text-[#131b2e] transition-colors cursor-pointer"
+          >
+            Switch Account
+          </button>
+
+          <div className="flex items-center space-x-1.5 text-xs font-semibold text-[#003523] bg-[#c0edd3]/25 px-3 py-1.5 rounded-xl border border-[#b6efd1]">
+            <ShieldCheck className="w-4 h-4 text-[#003523]" />
+            <span>Verified Resident</span>
+          </div>
+
+          <button
+            onClick={logoutCustomer}
+            className="flex items-center space-x-1.5 px-3 py-1.5 rounded-xl bg-red-50 hover:bg-red-100 text-red-700 border border-red-200 text-xs font-bold transition-colors cursor-pointer"
+            title="Log out of account"
+          >
+            <LogOut className="w-3.5 h-3.5 text-red-600" />
+            <span>Logout</span>
+          </button>
         </div>
       </div>
+
+      {/* Edit Profile Modal */}
+      {isEditProfileOpen && (
+        <div className="fixed inset-0 z-50 bg-black/50 backdrop-blur-xs flex items-center justify-center p-4 animate-in fade-in duration-150">
+          <div className="bg-white rounded-3xl max-w-md w-full p-6 space-y-4 shadow-2xl border border-gray-100 animate-scaleUp">
+            <div className="flex items-center justify-between pb-3 border-b border-gray-100">
+              <div className="flex items-center space-x-2">
+                <Edit3 className="w-4 h-4 text-[#003523]" />
+                <h3 className="font-bold text-sm text-[#131b2e]">Edit Resident Profile</h3>
+              </div>
+              <button
+                onClick={() => setIsEditProfileOpen(false)}
+                className="p-1 rounded-lg text-gray-400 hover:text-gray-700 cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            {profileError && (
+              <div className="p-3 bg-red-50 border border-red-200 rounded-xl text-xs text-red-700 flex items-start space-x-2">
+                <AlertCircle className="w-4 h-4 text-red-600 shrink-0 mt-0.5" />
+                <span className="leading-relaxed">{profileError}</span>
+              </div>
+            )}
+
+            <form onSubmit={handleSaveProfile} className="space-y-3.5">
+              <div>
+                <label className="block text-xs font-bold text-gray-700 uppercase tracking-wider mb-1">
+                  Full Name *
+                </label>
+                <input
+                  type="text"
+                  required
+                  value={editName}
+                  onChange={(e) => setEditName(e.target.value)}
+                  className="w-full text-xs p-2.5 rounded-xl border border-gray-200 focus:outline-none focus:ring-2 focus:ring-[#003523] font-semibold"
+                  placeholder="Enter full name"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold text-gray-700 uppercase tracking-wider mb-1">
+                  Mobile Number (+91) *
+                </label>
+                <input
+                  type="tel"
+                  required
+                  value={editPhone}
+                  onChange={(e) => setEditPhone(e.target.value)}
+                  className="w-full text-xs p-2.5 rounded-xl border border-gray-200 focus:outline-none focus:ring-2 focus:ring-[#003523] font-semibold"
+                  placeholder="+91 98888 12345"
+                />
+                <span className="text-[10px] text-gray-500 mt-1 block">
+                  Must be 10 digits starting with 6 to 9. One account per mobile number.
+                </span>
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold text-gray-700 uppercase tracking-wider mb-1">
+                  Locality / Sector
+                </label>
+                <select
+                  value={editLocality}
+                  onChange={(e) => setEditLocality(e.target.value)}
+                  className="w-full text-xs p-2.5 rounded-xl border border-gray-200 focus:outline-none focus:ring-2 focus:ring-[#003523] font-semibold bg-white cursor-pointer"
+                >
+                  {LOCALITIES.map((loc) => (
+                    <option key={loc} value={loc}>
+                      {loc}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold text-gray-700 uppercase tracking-wider mb-1">
+                  Primary Delivery Address
+                </label>
+                <textarea
+                  rows={2}
+                  value={editAddress}
+                  onChange={(e) => setEditAddress(e.target.value)}
+                  className="w-full text-xs p-2.5 rounded-xl border border-gray-200 focus:outline-none focus:ring-2 focus:ring-[#003523] font-semibold resize-none"
+                  placeholder="House / Flat / Tower details"
+                />
+              </div>
+
+              <div className="pt-2 flex items-center justify-end space-x-2">
+                <button
+                  type="button"
+                  onClick={() => setIsEditProfileOpen(false)}
+                  className="px-4 py-2 rounded-xl border border-gray-200 text-xs font-semibold text-gray-700 hover:bg-gray-50 cursor-pointer"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={isSavingProfile}
+                  className="px-4 py-2 rounded-xl bg-[#003523] hover:bg-[#144d37] text-white text-xs font-bold transition-all shadow-xs flex items-center space-x-1.5 cursor-pointer disabled:opacity-50"
+                >
+                  <Save className="w-3.5 h-3.5" />
+                  <span>{isSavingProfile ? 'Saving...' : 'Save Changes'}</span>
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
 
       {/* Tabs */}
       <div className="flex items-center space-x-2 border-b border-[#c0c9c2]/40 pb-2 text-xs font-bold">
@@ -130,7 +408,7 @@ export const CustomerAccountPage: React.FC = () => {
               : 'text-[#404943] hover:text-[#131b2e]'
           }`}
         >
-          Saved Addresses (3)
+          Saved Addresses ({currentUser?.address ? 1 : 0})
         </button>
         <button
           onClick={() => setActiveTab('dpdp')}
@@ -145,10 +423,27 @@ export const CustomerAccountPage: React.FC = () => {
         </button>
       </div>
 
+      {dataLoadError && (
+        <div className="p-4 rounded-xl bg-red-50 border border-red-200 text-red-700 text-xs flex items-center space-x-2">
+          <AlertCircle className="w-4 h-4 shrink-0 text-red-600" />
+          <span>Failed to load account records from Supabase: {dataLoadError}</span>
+        </div>
+      )}
+
       {/* Bookings Tab */}
       {activeTab === 'bookings' && (
         <div className="space-y-3">
-          {requests.length === 0 ? (
+          {isLoadingData && requests.length === 0 ? (
+            <div className="space-y-3">
+              {[1, 2, 3].map((n) => (
+                <div key={n} className="p-5 bg-white rounded-xl border border-[#c0c9c2]/40 animate-pulse space-y-2">
+                  <div className="h-4 bg-[#e7ede8] rounded w-1/4"></div>
+                  <div className="h-5 bg-[#e7ede8] rounded w-1/2"></div>
+                  <div className="h-3 bg-[#e7ede8] rounded w-1/3"></div>
+                </div>
+              ))}
+            </div>
+          ) : requests.length === 0 ? (
             <div className="p-8 text-center bg-white rounded-2xl border border-[#c0c9c2]/40 text-xs text-[#707973]">
               No service requests yet.
             </div>
@@ -192,6 +487,14 @@ export const CustomerAccountPage: React.FC = () => {
                       Assigned Pro: {order.assignedTo.name} ({order.assignedTo.phone})
                     </div>
                   )}
+
+                  <CustomerOtpDisplay
+                    requestId={order.id}
+                    status={order.status}
+                    bookingUserId={order.user_id}
+                    customerPhone={order.customerPhone}
+                    className="mt-2"
+                  />
                 </div>
 
                 <div className="flex items-center space-x-3 justify-between sm:justify-end border-t sm:border-t-0 pt-2 sm:pt-0 border-[#c0c9c2]/30">
@@ -247,28 +550,22 @@ export const CustomerAccountPage: React.FC = () => {
       {/* Addresses Tab */}
       {activeTab === 'addresses' && (
         <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-xs">
-          <div className="p-4 bg-white rounded-xl border border-[#003523] space-y-2">
-            <div className="flex justify-between items-center">
-              <span className="font-bold text-[#003523]">Primary Residence (Sector 104)</span>
-              <span className="text-[10px] bg-[#c0edd3] text-[#003523] px-1.5 py-0.5 rounded font-bold">
-                DEFAULT
-              </span>
+          {currentUser?.address ? (
+            <div className="p-4 bg-white rounded-xl border border-[#003523] space-y-2">
+              <div className="flex justify-between items-center">
+                <span className="font-bold text-[#003523]">Primary Residence ({currentUser.locality || currentLocality})</span>
+                <span className="text-[10px] bg-[#c0edd3] text-[#003523] px-1.5 py-0.5 rounded font-bold">
+                  DEFAULT
+                </span>
+              </div>
+              <p className="text-[#131b2e]">{currentUser.address}</p>
+              <div className="text-[11px] text-[#707973]">Locality: {currentUser.locality || currentLocality}</div>
             </div>
-            <p className="text-[#131b2e]">Villa 42, The Terraces, Sector 104, Mohali</p>
-            <div className="text-[11px] text-[#707973]">Landmark: Emaar Mohali Hills Luxury Belt</div>
-          </div>
-
-          <div className="p-4 bg-white rounded-xl border border-[#c0c9c2]/50 space-y-2">
-            <span className="font-bold text-[#131b2e]">Apartment (Sector 110)</span>
-            <p className="text-[#131b2e]">Tower 4, Flat 602, Wellington Heights, TDI City, Sector 110, Mohali</p>
-            <div className="text-[11px] text-[#707973]">Landmark: TDI Wellington Park Gate</div>
-          </div>
-
-          <div className="p-4 bg-white rounded-xl border border-[#c0c9c2]/50 space-y-2">
-            <span className="font-bold text-[#131b2e]">Office / Commercial (Sector 111)</span>
-            <p className="text-[#131b2e]">SCO 18, TDI Connaught Place, Sector 111, Mohali</p>
-            <div className="text-[11px] text-[#707973]">Landmark: Landran–Banur Road Junction</div>
-          </div>
+          ) : (
+            <div className="p-8 col-span-2 text-center bg-white rounded-2xl border border-[#c0c9c2]/40 text-xs text-[#707973]">
+              No saved addresses on file. Add your delivery address during service checkout.
+            </div>
+          )}
         </div>
       )}
 

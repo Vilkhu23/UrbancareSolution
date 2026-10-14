@@ -1,4 +1,24 @@
-export type UserRole = 'customer' | 'operations' | 'vendor' | 'employee';
+export type UserRole = 
+  | 'customer'
+  | 'technician'
+  | 'vendor'
+  | 'ops_manager'
+  | 'admin'
+  | 'employee'
+  | 'operations';
+
+export interface ProfileRecord {
+  id: string;
+  role: UserRole;
+  full_name: string;
+  phone: string;
+  phone_verified: boolean;
+  locality?: string;
+  address?: string;
+  must_change_password?: boolean;
+  created_at?: string;
+  updated_at?: string;
+}
 
 export type PriceType = 
   | 'FIXED'
@@ -150,6 +170,7 @@ export interface ServiceRequestItem {
 
 export interface ServiceRequest {
   id: string;
+  user_id?: string;
   customerName: string;
   customerPhone: string;
   customerEmail?: string;
@@ -205,6 +226,7 @@ export interface ServiceRequest {
 
 export interface CustomerRecord {
   id: string;
+  user_id?: string;
   name: string;
   phone: string;
   email: string;
@@ -219,6 +241,7 @@ export interface CustomerRecord {
 
 export interface ComplaintRecord {
   id: string;
+  user_id?: string;
   requestId: string;
   customerName: string;
   customerPhone: string;
@@ -234,6 +257,7 @@ export interface ComplaintRecord {
 
 export interface PaymentRecord {
   id: string;
+  user_id?: string;
   requestId: string;
   customerName: string;
   amount: number;
@@ -260,6 +284,7 @@ export interface OpsSettings {
 
 export interface Vendor {
   id: string;
+  user_id?: string;
   businessName: string;
   ownerName: string;
   mobile: string;
@@ -300,6 +325,7 @@ export interface OpportunityLedgerEntry {
 
 export interface Employee {
   id: string;
+  user_id?: string;
   name: string;
   mobile: string;
   password?: string;
@@ -318,6 +344,7 @@ export interface Employee {
 
 export interface HomeProjectRequest {
   id: string;
+  user_id?: string;
   customerName: string;
   customerPhone: string;
   locality: string;

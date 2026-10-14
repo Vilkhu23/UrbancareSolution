@@ -12,7 +12,8 @@ import {
   Lock,
   AlertTriangle
 } from 'lucide-react';
-import { validateStrongPassword } from '../utils/authValidation';
+import { validateStrongPassword, validateIndianPhone } from '../utils/authValidation';
+import { checkPhoneAvailableViaRpc } from '../services/supabaseService';
 
 export const BecomePartnerPage: React.FC = () => {
   const { addVendor, currentLocality, showToast, currentRole, setCurrentRole, setCurrentPage, setIsAuthModalOpen } = useApp();
@@ -27,6 +28,7 @@ export const BecomePartnerPage: React.FC = () => {
   const [experienceYears, setExperienceYears] = useState(5);
   const [selectedPlanId, setSelectedPlanId] = useState<'initial' | 'contractor' | 'enterprise'>('initial');
   const [submitted, setSubmitted] = useState(false);
+  const [isSubmitting, setIsSubmitting] = useState(false);
 
   const passwordValidation = validateStrongPassword(password);
 
@@ -53,8 +55,14 @@ export const BecomePartnerPage: React.FC = () => {
 
   const selectedPlan = planConfig[selectedPlanId];
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+
+    const phoneVal = validateIndianPhone(mobile);
+    if (!phoneVal.isValid) {
+      showToast(phoneVal.message || 'Please enter a valid 10-digit mobile number starting with 6 to 9 (+91).', 'error');
+      return;
+    }
 
     if (password.length < 8) {
       showToast('Password must be at least 8 characters long', 'error');
@@ -66,35 +74,68 @@ export const BecomePartnerPage: React.FC = () => {
       return;
     }
 
-    addVendor({
-      id: `vnd-${Date.now()}`,
-      businessName,
-      ownerName,
-      mobile,
-      email: email || `${ownerName.toLowerCase().replace(/\s+/g, '')}@gmail.com`,
-      password,
-      categories: [category],
-      serviceAreas: [currentLocality, 'Sector 104, Mohali', 'Sector 110, Mohali', 'Sector 94, Mohali'],
-      experienceYears: Number(experienceYears),
-      documentsVerified: false,
-      status: 'PENDING_VERIFICATION',
-      plan: {
-        name: selectedPlan.name,
-        price: selectedPlan.price,
-        totalOpportunities: selectedPlan.totalOpportunities,
-        usedOpportunities: 0,
-        remainingOpportunities: selectedPlan.totalOpportunities,
-        validityDays: selectedPlan.validityDays,
-        expiryDate: new Date(Date.now() + selectedPlan.validityDays * 24 * 60 * 60 * 1000).toISOString().split('T')[0]
-      },
-      activeJobs: 0,
-      completedJobs: 0,
-      rating: 5.0,
-      createdAt: new Date().toISOString().split('T')[0]
-    });
+    setIsSubmitting(true);
 
-    setSubmitted(true);
-    showToast(`Partner application submitted! Queued for Operations Manager review & activation.`, 'success');
+    // Pre-check phone availability via check_phone_available RPC
+    try {
+      const isAvailable = await checkPhoneAvailableViaRpc(phoneVal.formatted);
+      if (!isAvailable) {
+        showToast('This mobile number is already registered. Please log in, or contact support if this is not you.', 'error');
+        setIsSubmitting(false);
+        return;
+      }
+    } catch (err: unknown) {
+      if (err instanceof Error && err.message.includes('Too many')) {
+        showToast(err.message, 'error');
+        setIsSubmitting(false);
+        return;
+      }
+    }
+
+    try {
+      addVendor({
+        id: `vnd-${Date.now()}`,
+        businessName,
+        ownerName,
+        mobile: phoneVal.formatted,
+        email: email || `${ownerName.toLowerCase().replace(/\s+/g, '')}@gmail.com`,
+        password,
+        categories: [category],
+        serviceAreas: [currentLocality, 'Sector 104, Mohali', 'Sector 110, Mohali', 'Sector 94, Mohali'],
+        experienceYears: Number(experienceYears),
+        documentsVerified: false,
+        status: 'PENDING_VERIFICATION',
+        plan: {
+          name: selectedPlan.name,
+          price: selectedPlan.price,
+          totalOpportunities: selectedPlan.totalOpportunities,
+          usedOpportunities: 0,
+          remainingOpportunities: selectedPlan.totalOpportunities,
+          validityDays: selectedPlan.validityDays,
+          expiryDate: new Date(Date.now() + selectedPlan.validityDays * 24 * 60 * 60 * 1000).toISOString().split('T')[0]
+        },
+        activeJobs: 0,
+        completedJobs: 0,
+        rating: 5.0,
+        createdAt: new Date().toISOString().split('T')[0]
+      });
+
+      setSubmitted(true);
+      showToast(`Partner application submitted! Queued for Operations Manager review & activation.`, 'success');
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : 'Partner application failed.';
+      if (
+        msg.includes('PHONE_ALREADY_REGISTERED') ||
+        msg.includes('idx_profiles_phone_normalized') ||
+        msg.toLowerCase().includes('duplicate')
+      ) {
+        showToast('This mobile number is already registered. Please log in, or contact support if this is not you.', 'error');
+      } else {
+        showToast(msg, 'error');
+      }
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
   return (
@@ -293,13 +334,11 @@ export const BecomePartnerPage: React.FC = () => {
               <button
                 type="button"
                 onClick={() => {
-                  setCurrentRole('operations');
-                  setCurrentPage('admin');
+                  setCurrentPage('home');
                 }}
                 className="px-4 py-2 rounded-xl bg-[#003523] hover:bg-[#144d37] text-white text-xs font-bold shadow-xs flex items-center space-x-1"
               >
-                <ShieldCheck className="w-3.5 h-3.5 text-[#fe932c]" />
-                <span>Switch to Operations Portal to Approve</span>
+                <span>Return to Home</span>
               </button>
             </div>
           </div>

@@ -11,7 +11,8 @@ interface EmployeeCompleteModalProps {
     completionPhotos: string[],
     materialInfo?: string,
     partsUsed?: { name: string; quantity: number; cost: number }[],
-    paymentCollectedMode?: 'CASH' | 'UPI' | 'ONLINE'
+    paymentCollectedMode?: 'CASH' | 'UPI' | 'ONLINE',
+    customerOtp?: string
   ) => void;
 }
 
@@ -49,6 +50,9 @@ export const EmployeeCompleteModal: React.FC<EmployeeCompleteModalProps> = ({
   const [parts, setParts] = useState<{ name: string; quantity: number; cost: number }[]>([]);
   const [newPartName, setNewPartName] = useState<string>('');
   const [newPartCost, setNewPartCost] = useState<number>(350);
+
+  // Mandatory customer verification OTP provided on-site
+  const [customerOtp, setCustomerOtp] = useState<string>('');
 
   // Mandatory completion confirmation checkbox
   const [confirmedByEmployee, setConfirmedByEmployee] = useState<boolean>(false);
@@ -94,6 +98,10 @@ export const EmployeeCompleteModal: React.FC<EmployeeCompleteModalProps> = ({
       alert('Please provide work notes detailing what was serviced or repaired.');
       return;
     }
+    if (customerOtp.trim().length !== 4) {
+      alert('Please enter the 4-digit customer verification OTP provided by the resident.');
+      return;
+    }
     if (!confirmedByEmployee) {
       alert('Please confirm that technical service and customer testing are completed.');
       return;
@@ -104,7 +112,8 @@ export const EmployeeCompleteModal: React.FC<EmployeeCompleteModalProps> = ({
       photos,
       materialText.trim() ? materialText.trim() : undefined,
       parts.length > 0 ? parts : undefined,
-      paymentMode
+      paymentMode,
+      customerOtp.trim()
     );
     onClose();
   };
@@ -297,7 +306,30 @@ export const EmployeeCompleteModal: React.FC<EmployeeCompleteModalProps> = ({
             />
           </div>
 
-          {/* 4. Completion Confirmation (Mandatory) */}
+          {/* 4. Customer Verification OTP (Mandatory) */}
+          <div className="p-3.5 bg-emerald-50 rounded-xl border border-emerald-200 space-y-2">
+            <div className="flex items-center justify-between">
+              <label className="text-xs font-bold text-emerald-950 flex items-center space-x-1.5">
+                <ShieldCheck className="w-4 h-4 text-[#003523]" />
+                <span>Customer Verification OTP (Mandatory) *</span>
+              </label>
+              <span className="text-[10px] text-emerald-800 font-semibold">Ask resident on-site</span>
+            </div>
+            <p className="text-[11px] text-emerald-900 leading-relaxed">
+              Ask the customer for the 4-digit completion code displayed on their active booking screen.
+            </p>
+            <input
+              type="text"
+              maxLength={4}
+              required
+              value={customerOtp}
+              onChange={(e) => setCustomerOtp(e.target.value.replace(/\D/g, ''))}
+              placeholder="••••"
+              className="w-full text-center tracking-widest text-lg font-black p-2.5 bg-white border border-emerald-300 rounded-xl focus:border-[#003523] text-gray-900 shadow-inner"
+            />
+          </div>
+
+          {/* 5. Completion Confirmation (Mandatory) */}
           <div className="p-3 bg-emerald-50 rounded-xl border border-emerald-200">
             <label className="flex items-start space-x-2.5 cursor-pointer text-xs text-emerald-950 font-medium">
               <input

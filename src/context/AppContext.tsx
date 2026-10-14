@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useState, useEffect } from 'react';
+import React, { createContext, useContext, useState, useEffect, useRef } from 'react';
 import {
   UserRole,
   ServiceItem,
@@ -23,8 +23,10 @@ import {
   EmployeeNotification,
   DPDPConsentPreferences,
   DPDPNominee,
-  DPDPGrievance
+  DPDPGrievance,
+  ProfileRecord
 } from '../types';
+import { validatePassword, validateIndianPhone, validateEmail } from '../utils/authValidation';
 import {
   INITIAL_SERVICES,
   INITIAL_PACKAGES,
@@ -47,6 +49,8 @@ import { calculateOrderPricing, normalizeServiceItem } from '../utils/pricingEng
 import { isSupabaseConfigured, supabase, checkSupabaseHealth } from '../lib/supabase';
 import {
   loadAllDataFromSupabase,
+  loadCatalogFromSupabase,
+  loadUserDataByRoleFromSupabase,
   syncCustomerToSupabase,
   syncEmployeeToSupabase,
   syncVendorToSupabase,
@@ -58,7 +62,9 @@ import {
   syncOpsSettingsToSupabase,
   syncHomeProjectToSupabase,
   syncCustomerReviewToSupabase,
-  mapServiceRequestFromDb
+  mapServiceRequestFromDb,
+  verifyJobOtpViaRpc,
+  recordPaymentViaRpc
 } from '../services/supabaseService';
 
 interface ToastMessage {
@@ -165,6 +171,7 @@ interface AppContextType {
   customers: CustomerRecord[];
   addCustomer: (customer: CustomerRecord) => void;
   updateCustomerStatus: (customerId: string, status: CustomerRecord['status']) => void;
+  releaseCustomerPhone: (userId: string) => void;
 
   // Complaints
   complaints: ComplaintRecord[];
@@ -200,7 +207,8 @@ interface AppContextType {
     requestId: string,
     paymentMode: 'CASH' | 'UPI' | 'ONLINE',
     notes?: string,
-    photos?: string[]
+    photos?: string[],
+    customerOtp?: string
   ) => void;
 
   // Employees & Employee Portal Actions
@@ -222,7 +230,8 @@ interface AppContextType {
     completionPhotos: string[],
     materialInfo?: string,
     partsUsed?: { name: string; quantity: number; cost: number }[],
-    paymentCollectedMode?: 'CASH' | 'UPI' | 'ONLINE'
+    paymentCollectedMode?: 'CASH' | 'UPI' | 'ONLINE',
+    customerOtp?: string
   ) => void;
 
   // Home Projects
@@ -258,11 +267,13 @@ interface AppContextType {
   setSelectedDetailServiceId: (id: string | null) => void;
   isAuthModalOpen: boolean;
   setIsAuthModalOpen: (open: boolean) => void;
+  closeAllModals: () => void;
 
   // Customer Authentication & Session State
+  authProfile: ProfileRecord | null;
   currentUser: CustomerRecord | null;
   setCurrentUser: (user: CustomerRecord | null) => void;
-  loginCustomer: (phoneOrEmail: string, otpOrPassword?: string) => boolean;
+  loginCustomer: (phoneOrEmail: string, otpOrPassword?: string) => Promise<boolean> | boolean;
   registerCustomer: (details: {
     name: string;
     phone: string;
@@ -270,10 +281,10 @@ interface AppContextType {
     locality?: string;
     address?: string;
     password?: string;
-  }) => CustomerRecord;
-  logoutCustomer: () => void;
-  loginStaff: (role: 'employee' | 'vendor' | 'operations', entityId?: string, password?: string) => boolean;
-  logoutStaff: () => void;
+  }) => Promise<CustomerRecord | null> | CustomerRecord;
+  logoutCustomer: () => Promise<void> | void;
+  loginStaff: (roleOrEmail: string, entityIdOrPassword?: string, password?: string) => Promise<boolean> | boolean;
+  logoutStaff: () => Promise<void> | void;
 
   // DPDP Act 2023 Compliance & Data Principal Rights
   dpdpConsent: DPDPConsentPreferences;
@@ -299,6 +310,8 @@ interface AppContextType {
     latencyMs?: number;
   };
   refreshDbConnection: () => Promise<void>;
+  isLoadingData: boolean;
+  dataLoadError: string | null;
 }
 
 const AppContext = createContext<AppContextType | undefined>(undefined);
@@ -326,25 +339,77 @@ const STORAGE_KEYS = {
   DPDP_GRIEVANCES: 'urbancare_dpdp_grievances_v1'
 };
 
-export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const [currentRole, setCurrentRoleState] = useState<UserRole>(() => {
-    return (localStorage.getItem(STORAGE_KEYS.CURRENT_ROLE) as UserRole) || 'customer';
-  });
+const DEFAULT_EMPTY_OPS_SETTINGS: OpsSettings = {
+  dispatchCenterName: 'UrbanCare Operations Command - Kharar Hub',
+  emergencyHotline: '+91 98889 00122',
+  supportEmail: 'ops@urbancaresolution.in',
+  password: '',
+  defaultVisitFee: 99,
+  defaultGstPercent: 18,
+  requireSupervisorSignoff: true,
+  autoSmsNotifications: true,
+  serviceRadiusKm: 12.5,
+  operatingHours: '08:00 AM - 08:00 PM',
+  activeLocalities: LOCALITIES
+};
 
-  const setCurrentRole = (role: UserRole) => {
-    setCurrentRoleState(role);
-    localStorage.setItem(STORAGE_KEYS.CURRENT_ROLE, role);
-  };
+// Purges all personal data and session state from browser storage on logout,
+// strictly keeping only the preserved cart and locality preference keys.
+const purgeAllPersonalStorage = () => {
+  if (typeof window === 'undefined') return;
+  try {
+    if (window.localStorage) {
+      const preservedKeys = new Set([STORAGE_KEYS.CART, STORAGE_KEYS.LOCALITY]);
+      const keysToRemove: string[] = [];
+      for (let i = 0; i < localStorage.length; i++) {
+        const key = localStorage.key(i);
+        if (key && !preservedKeys.has(key)) {
+          keysToRemove.push(key);
+        }
+      }
+      keysToRemove.forEach((k) => localStorage.removeItem(k));
+    }
+    if (window.sessionStorage) {
+      sessionStorage.clear();
+    }
+  } catch (err) {
+    console.warn('Storage purge notice:', err);
+  }
+};
+
+const purgeLegacyPersonalData = purgeAllPersonalStorage;
+
+export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
+  // Authentication profile loaded from Supabase Auth & public.profiles
+  const [authProfile, setAuthProfile] = useState<ProfileRecord | null>(null);
+
+  // Role is always initialized as unprivileged 'customer' and derived strictly from Supabase
+  const [currentRole, setCurrentRoleState] = useState<UserRole>('customer');
 
   const [currentPage, setCurrentPage] = useState<string>('home');
   const [toasts, setToasts] = useState<ToastMessage[]>([]);
   
+  // Demo data and localStorage persistence are permitted ONLY when Supabase
+  // is NOT configured AND running in local dev mode (import.meta.env.DEV).
+  // In production builds and whenever Supabase is configured, data comes strictly from Supabase.
+  const isDemoFallbackAllowed = !isSupabaseConfigured() && Boolean(import.meta.env.DEV);
+
+  const [isLoadingData, setIsLoadingData] = useState<boolean>(isSupabaseConfigured());
+  const [dataLoadError, setDataLoadError] = useState<string | null>(null);
+
+  // One-time legacy personal data purge on app start
+  useEffect(() => {
+    purgeLegacyPersonalData();
+  }, []);
+
   const [currentVendorId, setCurrentVendorIdState] = useState<string | null>(() => {
-    return localStorage.getItem(STORAGE_KEYS.CURRENT_VENDOR) || 'vnd-1';
+    if (!isDemoFallbackAllowed) return null;
+    return localStorage.getItem(STORAGE_KEYS.CURRENT_VENDOR) || null;
   });
 
   const setCurrentVendorId = (id: string | null) => {
     setCurrentVendorIdState(id);
+    if (!isDemoFallbackAllowed) return;
     if (id) {
       localStorage.setItem(STORAGE_KEYS.CURRENT_VENDOR, id);
     } else {
@@ -353,11 +418,13 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   };
 
   const [currentEmployeeId, setCurrentEmployeeIdState] = useState<string | null>(() => {
-    return localStorage.getItem(STORAGE_KEYS.CURRENT_EMPLOYEE) || 'emp-1';
+    if (!isDemoFallbackAllowed) return null;
+    return localStorage.getItem(STORAGE_KEYS.CURRENT_EMPLOYEE) || null;
   });
 
   const setCurrentEmployeeId = (id: string | null) => {
     setCurrentEmployeeIdState(id);
+    if (!isDemoFallbackAllowed) return;
     if (id) {
       localStorage.setItem(STORAGE_KEYS.CURRENT_EMPLOYEE, id);
     } else {
@@ -366,13 +433,15 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   };
 
   const [employeeNotifications, setEmployeeNotifications] = useState<EmployeeNotification[]>(() => {
+    if (!isDemoFallbackAllowed) return [];
     const saved = localStorage.getItem(STORAGE_KEYS.EMPLOYEE_NOTIFICATIONS);
     return saved ? JSON.parse(saved) : INITIAL_EMPLOYEE_NOTIFICATIONS;
   });
 
   useEffect(() => {
+    if (!isDemoFallbackAllowed) return;
     localStorage.setItem(STORAGE_KEYS.EMPLOYEE_NOTIFICATIONS, JSON.stringify(employeeNotifications));
-  }, [employeeNotifications]);
+  }, [employeeNotifications, isDemoFallbackAllowed]);
 
   const markNotificationAsRead = (id: string) => {
     setEmployeeNotifications((prev) =>
@@ -380,18 +449,26 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     );
   };
 
+  // Locality preference stays in localStorage
   const [currentLocality, setCurrentLocalityState] = useState<string>(() => {
-    return localStorage.getItem(STORAGE_KEYS.LOCALITY) || LOCALITIES[0];
+    try {
+      return localStorage.getItem(STORAGE_KEYS.LOCALITY) || LOCALITIES[0];
+    } catch {
+      return LOCALITIES[0];
+    }
   });
 
   const setCurrentLocality = (loc: string) => {
     setCurrentLocalityState(loc);
-    localStorage.setItem(STORAGE_KEYS.LOCALITY, loc);
+    try {
+      localStorage.setItem(STORAGE_KEYS.LOCALITY, loc);
+    } catch {}
     showToast(`Neighborhood set to ${loc}`, 'info');
   };
 
-  // Load or initialize Services
+  // Load Services: empty array while loading, demo only in offline dev
   const [services, setServices] = useState<ServiceItem[]>(() => {
+    if (!isDemoFallbackAllowed) return [];
     const saved = localStorage.getItem(STORAGE_KEYS.SERVICES);
     if (!saved) return INITIAL_SERVICES;
     try {
@@ -406,75 +483,93 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   // Price History records
   const [priceHistory, setPriceHistory] = useState<PriceHistoryRecord[]>(() => {
+    if (!isDemoFallbackAllowed) return [];
     const saved = localStorage.getItem(STORAGE_KEYS.PRICE_HISTORY);
     return saved ? JSON.parse(saved) : INITIAL_PRICE_HISTORY;
   });
 
   useEffect(() => {
+    if (!isDemoFallbackAllowed) return;
     localStorage.setItem(STORAGE_KEYS.PRICE_HISTORY, JSON.stringify(priceHistory));
-  }, [priceHistory]);
+  }, [priceHistory, isDemoFallbackAllowed]);
 
   // Packages
   const [packages, setPackages] = useState<ServicePackage[]>(() => {
+    if (!isDemoFallbackAllowed) return [];
     const saved = localStorage.getItem(STORAGE_KEYS.PACKAGES);
     return saved ? JSON.parse(saved) : INITIAL_PACKAGES;
   });
 
   // Requests
   const [requests, setRequests] = useState<ServiceRequest[]>(() => {
+    if (!isDemoFallbackAllowed) return [];
     const saved = localStorage.getItem(STORAGE_KEYS.REQUESTS);
     return saved ? JSON.parse(saved) : INITIAL_REQUESTS;
   });
 
   // Vendors
   const [vendors, setVendors] = useState<Vendor[]>(() => {
+    if (!isDemoFallbackAllowed) return [];
     const saved = localStorage.getItem(STORAGE_KEYS.VENDORS);
     return saved ? JSON.parse(saved) : INITIAL_VENDORS;
   });
 
   // Opportunity Ledger
   const [opportunityLedger, setOpportunityLedger] = useState<OpportunityLedgerEntry[]>(() => {
+    if (!isDemoFallbackAllowed) return [];
     const saved = localStorage.getItem(STORAGE_KEYS.LEDGER);
     return saved ? JSON.parse(saved) : INITIAL_OPPORTUNITY_LEDGER;
   });
 
   // Employees
   const [employees, setEmployees] = useState<Employee[]>(() => {
+    if (!isDemoFallbackAllowed) return [];
     const saved = localStorage.getItem(STORAGE_KEYS.EMPLOYEES);
     return saved ? JSON.parse(saved) : INITIAL_EMPLOYEES;
   });
 
   // Projects
   const [projectRequests, setProjectRequests] = useState<HomeProjectRequest[]>(() => {
+    if (!isDemoFallbackAllowed) return [];
     const saved = localStorage.getItem(STORAGE_KEYS.PROJECTS);
     return saved ? JSON.parse(saved) : INITIAL_PROJECT_REQUESTS;
   });
 
   // Reviews
   const [reviews, setReviews] = useState<CustomerReview[]>(() => {
+    if (!isDemoFallbackAllowed) return [];
     const saved = localStorage.getItem(STORAGE_KEYS.REVIEWS);
     return saved ? JSON.parse(saved) : INITIAL_REVIEWS;
   });
 
   // Audit Logs
   const [auditLogs, setAuditLogs] = useState<AuditLog[]>(() => {
+    if (!isDemoFallbackAllowed) return [];
     const saved = localStorage.getItem(STORAGE_KEYS.AUDIT);
     return saved ? JSON.parse(saved) : INITIAL_AUDIT_LOGS;
   });
 
-  // Cart
+  // Cart: starts empty (no default AC service); only serviceId, quantity, locality stored
   const [cart, setCart] = useState<CartItem[]>(() => {
-    const saved = localStorage.getItem(STORAGE_KEYS.CART);
-    return saved ? JSON.parse(saved) : [
-      {
-        serviceId: 'srv-ac-gen',
-        serviceName: 'AC General Service',
-        category: 'AC & Appliances',
-        price: 499,
-        visitFee: 99,
-        quantity: 1
+    try {
+      const saved = localStorage.getItem(STORAGE_KEYS.CART);
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed)) {
+          return parsed.map((item: any) => ({
+            serviceId: item.serviceId,
+            serviceName: item.serviceName || 'Service Item',
+            category: item.category || 'General',
+            price: Number(item.price) || 0,
+            visitFee: Number(item.visitFee) || 0,
+            quantity: Number(item.quantity) || 1,
+            isPackage: Boolean(item.isPackage),
+            price_type: item.price_type || 'FIXED'
+          }));
+        }
       }
-    ];
+    } catch {}
+    return []; // Start empty
   });
 
   // Modals & UI States
@@ -486,111 +581,167 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const [selectedDetailServiceId, setSelectedDetailServiceId] = useState<string | null>(null);
   const [isAuthModalOpen, setIsAuthModalOpen] = useState(false);
 
-  // DPDP Modals & Rights States
+  // DPDP Modals & Rights States (clean state without seeded personal data)
   const [isDPDPNoticeOpen, setIsDPDPNoticeOpen] = useState(false);
   const [isDPDPConsentManagerOpen, setIsDPDPConsentManagerOpen] = useState(false);
   const [isDPDPDataRightsOpen, setIsDPDPDataRightsOpen] = useState(false);
 
+  // Session & logout tracker refs
+  const hasActiveSessionRef = useRef<boolean>(false);
+  const isExplicitLogoutRef = useRef<boolean>(false);
+
+  // Close all open drawers and modals on logout / session termination
+  const closeAllModals = () => {
+    setActiveTrackingRequestId(null);
+    setIsCartDrawerOpen(false);
+    setIsCustomTaskModalOpen(false);
+    setIsProjectModalOpen(false);
+    setIsLocalityModalOpen(false);
+    setSelectedDetailServiceId(null);
+    setIsAuthModalOpen(false);
+    setIsDPDPNoticeOpen(false);
+    setIsDPDPConsentManagerOpen(false);
+    setIsDPDPDataRightsOpen(false);
+  };
+
   const [dpdpConsent, setDpdpConsent] = useState<DPDPConsentPreferences>(() => {
-    const saved = localStorage.getItem(STORAGE_KEYS.DPDP_CONSENT);
-    if (saved) {
+    if (isDemoFallbackAllowed) {
       try {
-        return JSON.parse(saved);
-      } catch (e) {
-        // use default
-      }
+        const saved = localStorage.getItem(STORAGE_KEYS.DPDP_CONSENT);
+        if (saved) return JSON.parse(saved);
+      } catch {}
     }
     return {
       essentialService: true,
-      dispatchUpdates: true,
+      dispatchUpdates: false,
       promotionalMarketing: false,
       callMasking: true,
-      consentedAt: new Date().toISOString(),
-      ipJurisdiction: 'Kharar & Mohali (Punjab, India)',
+      consentedAt: '',
+      ipJurisdiction: '',
       version: 'DPDP-2023-V1.2'
     };
   });
 
   const [dpdpNominee, setDpdpNominee] = useState<DPDPNominee | null>(() => {
-    const saved = localStorage.getItem(STORAGE_KEYS.DPDP_NOMINEE);
-    return saved ? JSON.parse(saved) : null;
+    if (!isDemoFallbackAllowed) return null;
+    try {
+      const saved = localStorage.getItem(STORAGE_KEYS.DPDP_NOMINEE);
+      return saved ? JSON.parse(saved) : null;
+    } catch {
+      return null;
+    }
   });
 
   const [dpdpGrievances, setDpdpGrievances] = useState<DPDPGrievance[]>(() => {
-    const saved = localStorage.getItem(STORAGE_KEYS.DPDP_GRIEVANCES);
-    return saved ? JSON.parse(saved) : [
-      {
-        id: 'grv-sample-1',
-        ticketNo: 'DPDP-GRV-8492',
-        userName: 'Simranjeet Singh',
-        userPhone: '+91 98881 22340',
-        type: 'RIGHT_TO_ACCESS',
-        description: 'Requested verification of technician call masking on sector 115 booking.',
-        status: 'RESOLVED',
-        createdAt: '2025-05-10T10:00:00.000Z',
-        dpoOfficer: 'Mr. Gurpreet Singh (DPO, Kharar)',
-        resolutionNotes: 'Masked call relay verified active. No personal numbers exposed.'
-      }
-    ];
+    if (!isDemoFallbackAllowed) return [];
+    try {
+      const saved = localStorage.getItem(STORAGE_KEYS.DPDP_GRIEVANCES);
+      return saved ? JSON.parse(saved) : [];
+    } catch {
+      return [];
+    }
   });
 
-  // Sync DPDP preferences to storage
+  // Sync DPDP preferences only in offline demo mode
   useEffect(() => {
+    if (!isDemoFallbackAllowed) return;
     localStorage.setItem(STORAGE_KEYS.DPDP_CONSENT, JSON.stringify(dpdpConsent));
-  }, [dpdpConsent]);
+  }, [dpdpConsent, isDemoFallbackAllowed]);
 
   useEffect(() => {
+    if (!isDemoFallbackAllowed) return;
     if (dpdpNominee) {
       localStorage.setItem(STORAGE_KEYS.DPDP_NOMINEE, JSON.stringify(dpdpNominee));
     } else {
       localStorage.removeItem(STORAGE_KEYS.DPDP_NOMINEE);
     }
-  }, [dpdpNominee]);
+  }, [dpdpNominee, isDemoFallbackAllowed]);
 
   useEffect(() => {
+    if (!isDemoFallbackAllowed) return;
     localStorage.setItem(STORAGE_KEYS.DPDP_GRIEVANCES, JSON.stringify(dpdpGrievances));
-  }, [dpdpGrievances]);
+  }, [dpdpGrievances, isDemoFallbackAllowed]);
 
-  // Sync to local storage on changes
+  // Sync collections to local storage ONLY in offline demo mode
   useEffect(() => {
+    if (!isDemoFallbackAllowed) return;
     localStorage.setItem(STORAGE_KEYS.SERVICES, JSON.stringify(services));
-  }, [services]);
+  }, [services, isDemoFallbackAllowed]);
 
   useEffect(() => {
+    if (!isDemoFallbackAllowed) return;
     localStorage.setItem(STORAGE_KEYS.PACKAGES, JSON.stringify(packages));
-  }, [packages]);
+  }, [packages, isDemoFallbackAllowed]);
 
   useEffect(() => {
+    if (!isDemoFallbackAllowed) return;
     localStorage.setItem(STORAGE_KEYS.REQUESTS, JSON.stringify(requests));
-  }, [requests]);
+  }, [requests, isDemoFallbackAllowed]);
 
   useEffect(() => {
+    if (!isDemoFallbackAllowed) return;
     localStorage.setItem(STORAGE_KEYS.VENDORS, JSON.stringify(vendors));
-  }, [vendors]);
+  }, [vendors, isDemoFallbackAllowed]);
 
   useEffect(() => {
+    if (!isDemoFallbackAllowed) return;
     localStorage.setItem(STORAGE_KEYS.LEDGER, JSON.stringify(opportunityLedger));
-  }, [opportunityLedger]);
+  }, [opportunityLedger, isDemoFallbackAllowed]);
 
   useEffect(() => {
+    if (!isDemoFallbackAllowed) return;
     localStorage.setItem(STORAGE_KEYS.EMPLOYEES, JSON.stringify(employees));
-  }, [employees]);
+  }, [employees, isDemoFallbackAllowed]);
 
   useEffect(() => {
+    if (!isDemoFallbackAllowed) return;
     localStorage.setItem(STORAGE_KEYS.PROJECTS, JSON.stringify(projectRequests));
-  }, [projectRequests]);
+  }, [projectRequests, isDemoFallbackAllowed]);
 
   useEffect(() => {
+    if (!isDemoFallbackAllowed) return;
     localStorage.setItem(STORAGE_KEYS.REVIEWS, JSON.stringify(reviews));
-  }, [reviews]);
+  }, [reviews, isDemoFallbackAllowed]);
 
   useEffect(() => {
+    if (!isDemoFallbackAllowed) return;
     localStorage.setItem(STORAGE_KEYS.AUDIT, JSON.stringify(auditLogs));
-  }, [auditLogs]);
+  }, [auditLogs, isDemoFallbackAllowed]);
 
+  // Cart persistence: only serviceId, quantity, locality (no customer personal data)
   useEffect(() => {
-    localStorage.setItem(STORAGE_KEYS.CART, JSON.stringify(cart));
-  }, [cart]);
+    try {
+      const minimalCart = cart.map((item) => ({
+        serviceId: item.serviceId,
+        quantity: item.quantity,
+        locality: currentLocality
+      }));
+      localStorage.setItem(STORAGE_KEYS.CART, JSON.stringify(minimalCart));
+    } catch {}
+  }, [cart, currentLocality]);
+
+  // Hydrate cart item display details from live services catalog
+  useEffect(() => {
+    if (services.length > 0 && cart.length > 0) {
+      setCart((prev) =>
+        prev.map((item) => {
+          const match = services.find((s) => s.id === item.serviceId);
+          if (match) {
+            const price = match.base_price ?? match.basePrice ?? item.price;
+            const visitFee = match.visit_fee ?? match.visitFee ?? item.visitFee;
+            return {
+              ...item,
+              serviceName: match.name,
+              category: match.category,
+              price,
+              visitFee
+            };
+          }
+          return item;
+        })
+      );
+    }
+  }, [services]);
 
   // Database connection state (Supabase + PostgreSQL)
   const [dbStatus, setDbStatus] = useState<{
@@ -616,11 +767,124 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     });
   };
 
-  // Supabase PostgreSQL Bootstrap & Live Realtime Replication
+  // Customers (empty while loading, demo only in offline dev)
+  const [customers, setCustomers] = useState<CustomerRecord[]>(() => {
+    if (!isDemoFallbackAllowed) return [];
+    const saved = localStorage.getItem('pindcare_customers_v1');
+    return saved ? JSON.parse(saved) : INITIAL_CUSTOMERS;
+  });
+
+  // Current logged in customer state
+  const [currentUser, setCurrentUserState] = useState<CustomerRecord | null>(null);
+
+  const setCurrentUser = (user: CustomerRecord | null) => {
+    setCurrentUserState(user);
+  };
+
+  // Complaints
+  const [complaints, setComplaints] = useState<ComplaintRecord[]>(() => {
+    if (!isDemoFallbackAllowed) return [];
+    const saved = localStorage.getItem('pindcare_complaints_v1');
+    return saved ? JSON.parse(saved) : INITIAL_COMPLAINTS;
+  });
+
+  // Payments
+  const [payments, setPayments] = useState<PaymentRecord[]>(() => {
+    if (!isDemoFallbackAllowed) return [];
+    const saved = localStorage.getItem('pindcare_payments_v1');
+    return saved ? JSON.parse(saved) : INITIAL_PAYMENTS;
+  });
+
+  // Operations Settings
+  const [opsSettings, setOpsSettings] = useState<OpsSettings>(() => {
+    if (!isDemoFallbackAllowed) return DEFAULT_EMPTY_OPS_SETTINGS;
+    const saved = localStorage.getItem('pindcare_settings_v1');
+    return saved ? JSON.parse(saved) : INITIAL_OPS_SETTINGS;
+  });
+
+  useEffect(() => {
+    if (!isDemoFallbackAllowed) return;
+    localStorage.setItem('pindcare_customers_v1', JSON.stringify(customers));
+  }, [customers, isDemoFallbackAllowed]);
+
+  useEffect(() => {
+    if (!isDemoFallbackAllowed) return;
+    localStorage.setItem('pindcare_complaints_v1', JSON.stringify(complaints));
+  }, [complaints, isDemoFallbackAllowed]);
+
+  useEffect(() => {
+    if (!isDemoFallbackAllowed) return;
+    localStorage.setItem('pindcare_payments_v1', JSON.stringify(payments));
+  }, [payments, isDemoFallbackAllowed]);
+
+  useEffect(() => {
+    if (!isDemoFallbackAllowed) return;
+    localStorage.setItem('pindcare_settings_v1', JSON.stringify(opsSettings));
+  }, [opsSettings, isDemoFallbackAllowed]);
+
+  // Clears all in-memory personal state and purges browser storage on logout
+  // Preserves ONLY cart and locality keys per Task 1.3
+  const clearSessionData = () => {
+    setAuthProfile(null);
+    setCurrentUserState(null);
+    setCurrentRoleState('customer');
+    setCurrentEmployeeIdState(null);
+    setCurrentVendorIdState(null);
+    setRequests([]);
+    setCustomers([]);
+    setEmployees([]);
+    setVendors([]);
+    setComplaints([]);
+    setPayments([]);
+    setOpportunityLedger([]);
+    setProjectRequests([]);
+    setEmployeeNotifications([]);
+    setAuditLogs([]);
+    setDpdpNominee(null);
+    setDpdpGrievances([]);
+    purgeAllPersonalStorage();
+  };
+
+  // Role-based data loader: customers load only their own records;
+  // employee portal loads only assigned jobs; vendor portal loads only own jobs & ledger;
+  // admin / ops loads full tables.
+  const applyRoleData = async (role: string, userId: string) => {
+    if (!isSupabaseConfigured()) return;
+    try {
+      setIsLoadingData(true);
+      setDataLoadError(null);
+      const roleData = await loadUserDataByRoleFromSupabase(role, userId);
+      if (roleData) {
+        if (roleData.customers) setCustomers(roleData.customers);
+        if (roleData.employees) setEmployees(roleData.employees);
+        if (roleData.vendors) setVendors(roleData.vendors);
+        if (roleData.requests) setRequests(roleData.requests);
+        if (roleData.ledger) setOpportunityLedger(roleData.ledger);
+        if (roleData.complaints) setComplaints(roleData.complaints);
+        if (roleData.payments) setPayments(roleData.payments);
+        if (roleData.opsSettings) setOpsSettings(roleData.opsSettings);
+      }
+    } catch (err: any) {
+      console.error(`Role data load error for role ${role}:`, err);
+      setDataLoadError(err?.message || 'Failed to load user workspace records.');
+    } finally {
+      setIsLoadingData(false);
+    }
+  };
+
+  const setCurrentRole = async (role: UserRole) => {
+    setCurrentRoleState(role);
+    if (isSupabaseConfigured() && authProfile) {
+      const dbRole = role === 'employee' ? 'technician' : role === 'operations' ? 'ops_manager' : role;
+      await applyRoleData(dbRole, authProfile.id);
+    }
+  };
+
+  // Supabase PostgreSQL Bootstrap (Catalog) & Live Realtime Replication
   useEffect(() => {
     let isMounted = true;
 
-    const bootstrapSupabase = async () => {
+    const bootstrapCatalog = async () => {
       if (isSupabaseConfigured()) {
         const health = await checkSupabaseHealth();
         if (isMounted) {
@@ -633,22 +897,27 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         }
 
         if (health.connected) {
-          const remoteData = await loadAllDataFromSupabase();
-          if (remoteData && isMounted) {
-            if (remoteData.customers && remoteData.customers.length > 0) setCustomers(remoteData.customers);
-            if (remoteData.employees && remoteData.employees.length > 0) setEmployees(remoteData.employees);
-            if (remoteData.vendors && remoteData.vendors.length > 0) setVendors(remoteData.vendors);
-            if (remoteData.requests && remoteData.requests.length > 0) setRequests(remoteData.requests);
-            if (remoteData.ledger && remoteData.ledger.length > 0) setOpportunityLedger(remoteData.ledger);
-            if (remoteData.complaints && remoteData.complaints.length > 0) setComplaints(remoteData.complaints);
-            if (remoteData.payments && remoteData.payments.length > 0) setPayments(remoteData.payments);
-            if (remoteData.opsSettings) setOpsSettings(remoteData.opsSettings);
+          try {
+            setIsLoadingData(true);
+            const catalog = await loadCatalogFromSupabase();
+            if (catalog?.services && catalog.services.length > 0 && isMounted) {
+              setServices(catalog.services);
+            }
+          } catch (err: any) {
+            if (isMounted) {
+              console.error('Failed to load public catalog:', err);
+              setDataLoadError(err?.message || 'Failed to load service catalog.');
+            }
+          } finally {
+            if (isMounted) {
+              setIsLoadingData(false);
+            }
           }
         }
       }
     };
 
-    bootstrapSupabase();
+    bootstrapCatalog();
 
     // Supabase Realtime channel for live bookings & dispatch updates
     if (isSupabaseConfigured()) {
@@ -676,68 +945,130 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }
   }, []);
 
-  // Customers
-  const [customers, setCustomers] = useState<CustomerRecord[]>(() => {
-    const saved = localStorage.getItem('pindcare_customers_v1');
-    return saved ? JSON.parse(saved) : INITIAL_CUSTOMERS;
-  });
+  // Supabase Auth Session & Verified Role Synchronization
+  useEffect(() => {
+    let isMounted = true;
 
-  // Current logged in customer state (persisted)
-  const [currentUser, setCurrentUserState] = useState<CustomerRecord | null>(() => {
-    const saved = localStorage.getItem(STORAGE_KEYS.CURRENT_USER);
-    if (saved) {
-      try {
-        return JSON.parse(saved);
-      } catch {
-        // fallback
+    const syncSession = async () => {
+      if (isSupabaseConfigured()) {
+        try {
+          const { data: { session } } = await supabase.auth.getSession();
+          if (session?.user && isMounted) {
+            hasActiveSessionRef.current = true;
+            const { data: profile } = await supabase
+              .from('profiles')
+              .select('*')
+              .eq('id', session.user.id)
+              .maybeSingle();
+
+            if (profile && isMounted) {
+              setAuthProfile(profile);
+              if (profile.role === 'customer') {
+                setCurrentRoleState('customer');
+                setCurrentUserState({
+                  id: profile.id,
+                  user_id: profile.id,
+                  name: profile.full_name,
+                  phone: profile.phone,
+                  email: session.user.email || '',
+                  locality: profile.locality || 'Sector 94, Mohali',
+                  address: profile.address || '',
+                  totalBookings: 0,
+                  totalSpent: 0,
+                  registeredDate: profile.created_at ? new Date(profile.created_at).toISOString().split('T')[0] : new Date().toISOString().split('T')[0],
+                  status: 'ACTIVE'
+                });
+              } else if (profile.role === 'technician') {
+                setCurrentRoleState('employee');
+              } else if (profile.role === 'vendor') {
+                setCurrentRoleState('vendor');
+              } else if (profile.role === 'admin' || profile.role === 'ops_manager') {
+                setCurrentRoleState('operations');
+              }
+
+              // Load data strictly matching authenticated role
+              await applyRoleData(profile.role, profile.id);
+            }
+          }
+        } catch (err) {
+          console.warn('Supabase auth session sync notice:', err);
+        }
       }
+    };
+
+    syncSession();
+
+    if (isSupabaseConfigured()) {
+      const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
+        if (!isMounted) return;
+        if (event === 'SIGNED_OUT' || !session) {
+          if (hasActiveSessionRef.current && !isExplicitLogoutRef.current) {
+            // Unexpected session termination / expiry: show notification and open login modal
+            clearSessionData();
+            closeAllModals();
+            setCurrentPage('home');
+            if (typeof window !== 'undefined') {
+              window.history.replaceState(null, '', '/');
+            }
+            showToast('Your session expired, please log in again', 'warning');
+            setIsAuthModalOpen(true);
+          } else {
+            clearSessionData();
+          }
+          hasActiveSessionRef.current = false;
+        } else if (session?.user) {
+          hasActiveSessionRef.current = true;
+          try {
+            const { data: profile } = await supabase
+              .from('profiles')
+              .select('*')
+              .eq('id', session.user.id)
+              .maybeSingle();
+
+            if (profile && isMounted) {
+              setAuthProfile(profile);
+              if (profile.role === 'customer') {
+                setCurrentRoleState('customer');
+                setCurrentUserState({
+                  id: profile.id,
+                  user_id: profile.id,
+                  name: profile.full_name,
+                  phone: profile.phone,
+                  email: session.user.email || '',
+                  locality: profile.locality || 'Sector 94, Mohali',
+                  address: profile.address || '',
+                  totalBookings: 0,
+                  totalSpent: 0,
+                  registeredDate: profile.created_at ? new Date(profile.created_at).toISOString().split('T')[0] : new Date().toISOString().split('T')[0],
+                  status: 'ACTIVE'
+                });
+              } else if (profile.role === 'technician') {
+                setCurrentRoleState('employee');
+              } else if (profile.role === 'vendor') {
+                setCurrentRoleState('vendor');
+              } else if (profile.role === 'admin' || profile.role === 'ops_manager') {
+                setCurrentRoleState('operations');
+              }
+
+              await applyRoleData(profile.role, profile.id);
+
+              if (profile.must_change_password) {
+                showToast('Temporary password in use. Please change your password.', 'warning');
+                setCurrentPage('reset-password');
+              }
+            }
+          } catch (err) {
+            console.warn('Supabase auth state change error:', err);
+          }
+        }
+      });
+
+      return () => {
+        isMounted = false;
+        subscription.unsubscribe();
+      };
     }
-    // User must log in; default to null if no saved session
-    return null;
-  });
-
-  const setCurrentUser = (user: CustomerRecord | null) => {
-    setCurrentUserState(user);
-    if (user) {
-      localStorage.setItem(STORAGE_KEYS.CURRENT_USER, JSON.stringify(user));
-    } else {
-      localStorage.removeItem(STORAGE_KEYS.CURRENT_USER);
-    }
-  };
-
-  // Complaints
-  const [complaints, setComplaints] = useState<ComplaintRecord[]>(() => {
-    const saved = localStorage.getItem('pindcare_complaints_v1');
-    return saved ? JSON.parse(saved) : INITIAL_COMPLAINTS;
-  });
-
-  // Payments
-  const [payments, setPayments] = useState<PaymentRecord[]>(() => {
-    const saved = localStorage.getItem('pindcare_payments_v1');
-    return saved ? JSON.parse(saved) : INITIAL_PAYMENTS;
-  });
-
-  // Operations Settings
-  const [opsSettings, setOpsSettings] = useState<OpsSettings>(() => {
-    const saved = localStorage.getItem('pindcare_settings_v1');
-    return saved ? JSON.parse(saved) : INITIAL_OPS_SETTINGS;
-  });
-
-  useEffect(() => {
-    localStorage.setItem('pindcare_customers_v1', JSON.stringify(customers));
-  }, [customers]);
-
-  useEffect(() => {
-    localStorage.setItem('pindcare_complaints_v1', JSON.stringify(complaints));
-  }, [complaints]);
-
-  useEffect(() => {
-    localStorage.setItem('pindcare_payments_v1', JSON.stringify(payments));
-  }, [payments]);
-
-  useEffect(() => {
-    localStorage.setItem('pindcare_settings_v1', JSON.stringify(opsSettings));
-  }, [opsSettings]);
+  }, []);
 
   // Toast Helpers
   const showToast = (text: string, type: 'success' | 'info' | 'warning' | 'error' = 'info') => {
@@ -778,145 +1109,169 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     showToast(`Added customer ${customer.name}`, 'success');
   };
 
-  const loginCustomer = (phoneOrEmail: string, otpOrPassword?: string): boolean => {
+  // Client cooldown tracker: 5 failed attempts -> 30s block
+  const [failedAttempts, setFailedAttempts] = useState(0);
+  const [cooldownUntil, setCooldownUntil] = useState(0);
+
+  const checkLoginCooldown = (): boolean => {
+    const now = Date.now();
+    if (now < cooldownUntil) {
+      const secondsLeft = Math.ceil((cooldownUntil - now) / 1000);
+      showToast(`Too many failed attempts. Please wait ${secondsLeft}s before trying again.`, 'error');
+      return true;
+    }
+    return false;
+  };
+
+  const handleFailedLogin = () => {
+    const nextAttempts = failedAttempts + 1;
+    if (nextAttempts >= 5) {
+      setCooldownUntil(Date.now() + 30000);
+      setFailedAttempts(0);
+      showToast('Too many failed attempts. Sign in locked for 30 seconds.', 'error');
+    } else {
+      setFailedAttempts(nextAttempts);
+      showToast('Incorrect email or password', 'error');
+    }
+  };
+
+  const handleSuccessfulLogin = () => {
+    setFailedAttempts(0);
+    setCooldownUntil(0);
+  };
+
+  const loginCustomer = async (phoneOrEmail: string, otpOrPassword?: string): Promise<boolean> => {
+    if (checkLoginCooldown()) return false;
+
+    const credential = (otpOrPassword || '').trim();
     const cleanInput = phoneOrEmail.trim().toLowerCase();
+
+    if (!cleanInput || !credential) {
+      showToast('Please enter both email/phone and password.', 'error');
+      return false;
+    }
+
+    if (isSupabaseConfigured()) {
+      try {
+        let emailToUse = cleanInput;
+        if (!cleanInput.includes('@')) {
+          const cleanPhoneDigits = cleanInput.replace(/\D/g, '');
+          const matchedCust = customers.find((c) => c.phone.replace(/\D/g, '').endsWith(cleanPhoneDigits.slice(-10)));
+          if (matchedCust && matchedCust.email) {
+            emailToUse = matchedCust.email;
+          } else {
+            emailToUse = `${cleanPhoneDigits}@resident.urbancaresolution.in`;
+          }
+        }
+
+        const { data, error } = await supabase.auth.signInWithPassword({
+          email: emailToUse,
+          password: credential,
+        });
+
+        if (error || !data.user) {
+          handleFailedLogin();
+          return false;
+        }
+
+        handleSuccessfulLogin();
+        showToast('Signed in successfully!', 'success');
+        return true;
+      } catch {
+        handleFailedLogin();
+        return false;
+      }
+    }
+
+    // Local offline mock fallback (DEV only)
+    if (!import.meta.env.DEV) {
+      showToast('Service not configured. Please contact administrator.', 'error');
+      return false;
+    }
+
     const cleanPhoneDigits = cleanInput.replace(/\D/g, '');
-
-    // 1. Check Operations Login credentials
-    if (
-      cleanInput === 'ops@urbancaresolution.in' ||
-      cleanInput === 'admin' ||
-      cleanInput === 'ops' ||
-      cleanInput === 'vilkhu08@gmail.com' ||
-      cleanPhoneDigits.endsWith('9888900122')
-    ) {
-      const opsPass = opsSettings.password || 'OpsLead@2026';
-      if (!otpOrPassword) {
-        showToast('Please enter the Operations Command password.', 'error');
-        return false;
-      }
-      if (otpOrPassword !== opsPass && otpOrPassword !== '123456' && otpOrPassword !== 'OpsLead@2026') {
-        showToast('Incorrect password for Operations Command.', 'error');
-        return false;
-      }
-      setCurrentRole('operations');
-      setCurrentPage('admin');
-      showToast('Welcome, Operations Dispatch Supervisor (Harman)!', 'success');
-      return true;
-    }
-
-    // 2. Check Employee / Technician match
-    const matchedEmployee = employees.find((emp) => {
-      const empDigits = emp.mobile.replace(/\D/g, '');
-      const code = (emp.employeeCode || '').toLowerCase();
-      return (
-        code === cleanInput ||
-        emp.id.toLowerCase() === cleanInput ||
-        (cleanPhoneDigits.length >= 10 && empDigits.endsWith(cleanPhoneDigits.slice(-10)))
-      );
-    });
-
-    if (matchedEmployee) {
-      const empPass = matchedEmployee.password || 'TechPass@101';
-      if (!otpOrPassword) {
-        showToast(`Please enter password for technician ${matchedEmployee.name}.`, 'error');
-        return false;
-      }
-      if (otpOrPassword !== empPass && otpOrPassword !== '123456' && otpOrPassword !== 'TechPass@101') {
-        showToast('Incorrect password entered for technician account.', 'error');
-        return false;
-      }
-      setCurrentEmployeeId(matchedEmployee.id);
-      setCurrentRole('employee');
-      setCurrentPage('employee');
-      showToast(`Welcome, ${matchedEmployee.name} (${matchedEmployee.role || 'Staff Technician'})`, 'success');
-      return true;
-    }
-
-    // 3. Check Vendor Partner match
-    const matchedVendor = vendors.find((vnd) => {
-      const vndDigits = vnd.mobile.replace(/\D/g, '');
-      const email = (vnd.email || '').toLowerCase();
-      return (
-        vnd.id.toLowerCase() === cleanInput ||
-        email === cleanInput ||
-        (cleanPhoneDigits.length >= 10 && vndDigits.endsWith(cleanPhoneDigits.slice(-10)))
-      );
-    });
-
-    if (matchedVendor) {
-      if (matchedVendor.status === 'PENDING_VERIFICATION') {
-        showToast(`Vendor account "${matchedVendor.businessName}" is pending Operations Manager approval & activation. Please wait for confirmation.`, 'warning');
-        return false;
-      }
-      if (matchedVendor.status === 'SUSPENDED' || matchedVendor.status === 'REJECTED') {
-        showToast(`Vendor profile is ${matchedVendor.status.toLowerCase()}. Access denied. Please contact Operations.`, 'error');
-        return false;
-      }
-      if (matchedVendor.password) {
-        if (!otpOrPassword) {
-          showToast('Please enter your vendor password to sign in.', 'error');
-          return false;
-        }
-        if (matchedVendor.password !== otpOrPassword && otpOrPassword !== '123456') {
-          showToast('Incorrect password entered for vendor account.', 'error');
-          return false;
-        }
-      }
-      setCurrentVendorId(matchedVendor.id);
-      setCurrentRole('vendor');
-      setCurrentPage('vendor');
-      showToast(`Welcome, ${matchedVendor.businessName} (${matchedVendor.ownerName})`, 'success');
-      return true;
-    }
-
-    // 4. Resident / Customer match
     const existing = customers.find((c) => {
-      const cEmail = (c.email || '').trim().toLowerCase();
-      const cPhoneDigits = c.phone.replace(/\D/g, '');
-      return (
-        cEmail === cleanInput ||
-        cPhoneDigits === cleanPhoneDigits ||
-        (cleanPhoneDigits.length >= 10 && cPhoneDigits.endsWith(cleanPhoneDigits.slice(-10)))
-      );
+      const cEmail = (c.email || '').toLowerCase();
+      const cDigits = c.phone.replace(/\D/g, '');
+      return cEmail === cleanInput || (cleanPhoneDigits.length >= 10 && cDigits.endsWith(cleanPhoneDigits.slice(-10)));
     });
 
-    if (existing) {
-      if (existing.password) {
-        if (!otpOrPassword) {
-          showToast('Please enter your 8-letter password or verification OTP.', 'error');
-          return false;
-        }
-        if (existing.password !== otpOrPassword && otpOrPassword !== '123456') {
-          showToast('Incorrect password or verification code entered.', 'error');
-          return false;
-        }
-      }
+    if (existing && existing.password && existing.password === credential) {
+      handleSuccessfulLogin();
       setCurrentUser(existing);
       setCurrentRole('customer');
-      if (existing.locality) {
-        setCurrentLocalityState(existing.locality);
-      }
-      addAuditEntry('CUSTOMER_LOGIN', 'VENDOR', existing.id, `Customer ${existing.name} logged in`);
       showToast(`Welcome back, ${existing.name}!`, 'success');
       return true;
-    } else {
-      // If user provided a valid 10-digit phone number or email, auto-create or register account
-      if (cleanPhoneDigits.length >= 10 || cleanInput.includes('@')) {
-        const generatedName = cleanInput.includes('@') 
-          ? cleanInput.split('@')[0].replace('.', ' ')
-          : `Resident ${cleanPhoneDigits.slice(-4)}`;
-        const formattedPhone = cleanPhoneDigits.length >= 10 
-          ? `+91 ${cleanPhoneDigits.slice(-10)}` 
-          : phoneOrEmail;
+    }
 
+    handleFailedLogin();
+    return false;
+  };
+
+  const registerCustomer = async (details: {
+    name: string;
+    phone: string;
+    email?: string;
+    locality?: string;
+    address?: string;
+    password?: string;
+  }): Promise<CustomerRecord | null> => {
+    const rawPass = (details.password || '').trim();
+    const passVal = validatePassword(rawPass);
+    if (!passVal.isValid) {
+      showToast(passVal.message || 'Password must be at least 8 characters long.', 'error');
+      return null;
+    }
+
+    const phoneVal = validateIndianPhone(details.phone);
+    if (!phoneVal.isValid) {
+      showToast(phoneVal.message || 'Please enter a valid Indian mobile number (+91).', 'error');
+      return null;
+    }
+
+    const emailToUse = (details.email || '').trim() || `${details.phone.replace(/\D/g, '')}@resident.urbancaresolution.in`;
+    if (!validateEmail(emailToUse)) {
+      showToast('Please enter a valid email address.', 'error');
+      return null;
+    }
+
+    if (isSupabaseConfigured()) {
+      try {
+        const { data, error } = await supabase.auth.signUp({
+          email: emailToUse,
+          password: rawPass,
+          options: {
+            data: {
+              full_name: details.name.trim(),
+              phone: phoneVal.formatted,
+              locality: details.locality || currentLocality,
+              address: details.address || '',
+            }
+          }
+        });
+
+        if (error) {
+          if (
+            error.message?.includes('PHONE_ALREADY_REGISTERED') ||
+            error.message?.includes('idx_profiles_phone_normalized') ||
+            error.message?.toLowerCase().includes('duplicate')
+          ) {
+            showToast('This mobile number is already registered. Please log in, or contact support if this is not you.', 'error');
+          } else {
+            showToast(error.message, 'error');
+          }
+          return null;
+        }
+
+        const newId = data.user?.id || `cust-${Date.now()}`;
         const newCustomer: CustomerRecord = {
-          id: `cust-${Date.now()}`,
-          name: generatedName.charAt(0).toUpperCase() + generatedName.slice(1),
-          phone: formattedPhone,
-          email: cleanInput.includes('@') ? cleanInput : `${cleanPhoneDigits}@urbancaresolution.in`,
-          locality: currentLocality,
-          address: `House / Flat, ${currentLocality}`,
+          id: newId,
+          user_id: newId,
+          name: details.name.trim(),
+          phone: phoneVal.formatted,
+          email: emailToUse,
+          locality: details.locality || currentLocality,
+          address: details.address || '',
           totalBookings: 0,
           totalSpent: 0,
           registeredDate: new Date().toISOString().split('T')[0],
@@ -926,198 +1281,203 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         setCustomers((prev) => [newCustomer, ...prev]);
         setCurrentUser(newCustomer);
         setCurrentRole('customer');
-        addAuditEntry('CUSTOMER_REGISTERED', 'VENDOR', newCustomer.id, `New customer registered: ${newCustomer.phone}`);
-        showToast(`Account created & logged in as ${newCustomer.name}`, 'success');
-        return true;
+        showToast(`Welcome to UrbanCare Solution, ${newCustomer.name}!`, 'success');
+        return newCustomer;
+      } catch (err: unknown) {
+        const msg = err instanceof Error ? err.message : 'Registration failed.';
+        if (
+          msg.includes('PHONE_ALREADY_REGISTERED') ||
+          msg.includes('idx_profiles_phone_normalized') ||
+          msg.toLowerCase().includes('duplicate')
+        ) {
+          showToast('This mobile number is already registered. Please log in, or contact support if this is not you.', 'error');
+        } else {
+          showToast(msg, 'error');
+        }
+        return null;
       }
-
-      showToast('Please enter a valid 10-digit mobile number or email.', 'error');
-      return false;
     }
-  };
 
-  const registerCustomer = (details: {
-    name: string;
-    phone: string;
-    email?: string;
-    locality?: string;
-    address?: string;
-    password?: string;
-  }): CustomerRecord => {
-    const cleanPhoneDigits = details.phone.replace(/\D/g, '');
-    const formattedPhone = cleanPhoneDigits.length >= 10
-      ? `+91 ${cleanPhoneDigits.slice(-10)}`
-      : details.phone;
-
-    // Check if customer already exists by phone
-    const existing = customers.find((c) => {
-      const cPhoneDigits = c.phone.replace(/\D/g, '');
-      return cleanPhoneDigits.length >= 10 && cPhoneDigits.endsWith(cleanPhoneDigits.slice(-10));
-    });
-
-    if (existing) {
-      const updated: CustomerRecord = {
-        ...existing,
-        name: details.name || existing.name,
-        email: details.email || existing.email,
-        locality: details.locality || existing.locality,
-        address: details.address || existing.address,
-        password: details.password || existing.password
-      };
-      setCustomers((prev) => prev.map((c) => (c.id === existing.id ? updated : c)));
-      setCurrentUser(updated);
-      setCurrentRole('customer');
-      if (updated.locality) setCurrentLocalityState(updated.locality);
-      showToast(`Welcome back, ${updated.name}! Details updated.`, 'success');
-      return updated;
+    // Local offline mock fallback (DEV only)
+    if (!import.meta.env.DEV) {
+      showToast('Service not configured. Please contact administrator.', 'error');
+      return null;
     }
 
     const newCustomer: CustomerRecord = {
       id: `cust-${Date.now()}`,
-      name: details.name.trim() || 'Tricity Resident',
-      phone: formattedPhone,
-      email: details.email || '',
+      name: details.name.trim(),
+      phone: phoneVal.formatted,
+      email: emailToUse,
       locality: details.locality || currentLocality,
-      address: details.address || `Flat/House, ${details.locality || currentLocality}`,
-      password: details.password,
+      address: details.address || '',
+      password: rawPass,
       totalBookings: 0,
       totalSpent: 0,
       registeredDate: new Date().toISOString().split('T')[0],
       status: 'ACTIVE'
     };
-
     setCustomers((prev) => [newCustomer, ...prev]);
     setCurrentUser(newCustomer);
     setCurrentRole('customer');
-    if (newCustomer.locality) setCurrentLocalityState(newCustomer.locality);
-    addAuditEntry('CUSTOMER_REGISTERED', 'VENDOR', newCustomer.id, `Customer registered: ${newCustomer.name} (${newCustomer.phone})`);
     showToast(`Welcome to UrbanCare Solution, ${newCustomer.name}!`, 'success');
     return newCustomer;
   };
 
-  const logoutCustomer = () => {
-    const prevName = currentUser?.name;
-    setCurrentUser(null);
-    setCurrentRole('customer');
+  const logoutCustomer = async () => {
+    isExplicitLogoutRef.current = true;
+    if (isSupabaseConfigured()) {
+      try {
+        await supabase.auth.signOut();
+      } catch (err) {
+        console.warn('Supabase logout notice:', err);
+      }
+    }
+    closeAllModals();
+    clearSessionData();
     setCurrentPage('home');
-    clearCart();
-    setIsCartDrawerOpen(false);
-    showToast(prevName ? `Logged out of ${prevName}'s account` : 'Logged out', 'info');
+    if (typeof window !== 'undefined') {
+      window.history.replaceState(null, '', '/');
+    }
+    showToast('Logged out of account', 'info');
+    setTimeout(() => {
+      isExplicitLogoutRef.current = false;
+    }, 500);
   };
 
-  const loginStaff = (
-    role: 'employee' | 'vendor' | 'operations',
-    entityId?: string,
-    password?: string
-  ): boolean => {
-    const cleanPass = (password || '').trim();
+  const loginStaff = async (
+    roleOrEmail: string,
+    entityIdOrPassword?: string,
+    maybePassword?: string
+  ): Promise<boolean> => {
+    if (checkLoginCooldown()) return false;
 
-    if (role === 'employee') {
-      const query = (entityId || 'emp-1').trim().toLowerCase();
-      const cleanDigits = query.replace(/\D/g, '');
-      const emp = employees.find((e) => {
-        const eDigits = e.mobile.replace(/\D/g, '');
-        return (
-          e.id.toLowerCase() === query ||
-          (e.employeeCode && e.employeeCode.toLowerCase() === query) ||
-          e.name.toLowerCase().includes(query) ||
-          (cleanDigits.length >= 10 && eDigits.endsWith(cleanDigits.slice(-10)))
-        );
-      });
+    let email = '';
+    let password = '';
 
-      if (!emp) {
-        showToast('Technician profile not found. Please enter valid Employee Code or mobile number.', 'error');
-        return false;
+    if (maybePassword !== undefined) {
+      // Legacy call: loginStaff(role, entityId, password)
+      const role = roleOrEmail;
+      const entityId = entityIdOrPassword;
+      password = maybePassword.trim();
+
+      if (role === 'operations') {
+        email = 'ops@urbancaresolution.in';
+      } else if (role === 'employee') {
+        const emp = employees.find((e) => e.id === entityId);
+        email = emp?.mobile ? `${emp.mobile.replace(/\D/g, '')}@staff.urbancaresolution.in` : 'tech@urbancaresolution.in';
+      } else if (role === 'vendor') {
+        const vnd = vendors.find((v) => v.id === entityId);
+        email = vnd?.email || (vnd?.mobile ? `${vnd.mobile.replace(/\D/g, '')}@partner.urbancaresolution.in` : 'vendor@urbancaresolution.in');
       }
-
-      if (!cleanPass) {
-        showToast(`Please enter password for ${emp.name} (${emp.employeeCode || emp.id}).`, 'error');
-        return false;
-      }
-
-      const expectedPassword = emp.password || 'TechPass@101';
-      if (cleanPass !== expectedPassword && cleanPass !== '123456' && cleanPass !== 'TechPass@101') {
-        showToast('Incorrect password entered for technician account.', 'error');
-        return false;
-      }
-
-      setCurrentEmployeeId(emp.id);
-      setCurrentRole('employee');
-      setCurrentPage('employee');
-      addAuditEntry('STAFF_LOGIN', 'EMPLOYEE', emp.id, `Technician ${emp.name} (${emp.employeeCode || emp.id}) logged in`);
-      showToast(`Welcome ${emp.name}! Technician Hub unlocked for ${emp.employeeCode || 'EMP-101'}.`, 'success');
-      return true;
-    } else if (role === 'vendor') {
-      const query = (entityId || 'vnd-1').trim().toLowerCase();
-      const cleanDigits = query.replace(/\D/g, '');
-      const vnd = vendors.find((v) => {
-        const vDigits = v.mobile.replace(/\D/g, '');
-        return (
-          v.id.toLowerCase() === query ||
-          v.businessName.toLowerCase().includes(query) ||
-          v.ownerName.toLowerCase().includes(query) ||
-          (cleanDigits.length >= 10 && vDigits.endsWith(cleanDigits.slice(-10)))
-        );
-      });
-
-      if (!vnd) {
-        showToast('Vendor partner profile not found. Please verify Vendor ID or mobile number.', 'error');
-        return false;
-      }
-
-      if (vnd.status === 'PENDING_VERIFICATION') {
-        showToast(`Vendor account "${vnd.businessName}" is pending Operations Manager approval & activation. Cannot access Partner Hub until confirmed.`, 'warning');
-        return false;
-      }
-      if (vnd.status === 'SUSPENDED' || vnd.status === 'REJECTED') {
-        showToast(`Vendor profile "${vnd.businessName}" is ${vnd.status.toLowerCase()}. Access denied.`, 'error');
-        return false;
-      }
-
-      if (!cleanPass) {
-        showToast(`Please enter password for vendor partner ${vnd.businessName}.`, 'error');
-        return false;
-      }
-
-      const expectedPassword = vnd.password || 'MalwaPass@2026';
-      if (cleanPass !== expectedPassword && cleanPass !== '123456' && cleanPass !== 'VendorPass@2026') {
-        showToast('Incorrect password entered for vendor account.', 'error');
-        return false;
-      }
-
-      setCurrentVendorId(vnd.id);
-      setCurrentRole('vendor');
-      setCurrentPage('vendor');
-      addAuditEntry('VENDOR_LOGIN', 'VENDOR', vnd.id, `Vendor partner ${vnd.businessName} logged in`);
-      showToast(`Welcome, ${vnd.businessName}! Partner Portal unlocked.`, 'success');
-      return true;
-    } else if (role === 'operations') {
-      if (!cleanPass) {
-        showToast('Please enter the Operations Command password.', 'error');
-        return false;
-      }
-
-      const expectedPassword = opsSettings.password || 'OpsLead@2026';
-      if (cleanPass !== expectedPassword && cleanPass !== '123456' && cleanPass !== 'OpsLead@2026') {
-        showToast('Incorrect password for Operations Command.', 'error');
-        return false;
-      }
-
-      setCurrentRole('operations');
-      setCurrentPage('admin');
-      addAuditEntry('OPERATIONS_LOGIN', 'EMPLOYEE', 'ops-lead', 'Operations Lead authenticated into dispatch center');
-      showToast('Logged in as Operations Command Supervisor (Harman)', 'success');
-      return true;
+    } else {
+      // Modern signature: loginStaff(email, password)
+      email = roleOrEmail.trim();
+      password = (entityIdOrPassword || '').trim();
     }
+
+    if (!email || !password) {
+      showToast('Please enter both email and password.', 'error');
+      return false;
+    }
+
+    if (isSupabaseConfigured()) {
+      try {
+        const { data, error } = await supabase.auth.signInWithPassword({
+          email,
+          password,
+        });
+
+        if (error || !data.user) {
+          handleFailedLogin();
+          return false;
+        }
+
+        // Verify profile and staff role from the database
+        const { data: profile } = await supabase
+          .from('profiles')
+          .select('*')
+          .eq('id', data.user.id)
+          .maybeSingle();
+
+        if (!profile || profile.role === 'customer') {
+          showToast('Account does not have staff permissions.', 'error');
+          await supabase.auth.signOut();
+          return false;
+        }
+
+        handleSuccessfulLogin();
+        setAuthProfile(profile);
+
+        if (profile.must_change_password) {
+          showToast('Temporary password in use. Please change your password.', 'warning');
+          setCurrentPage('reset-password');
+          return true;
+        }
+
+        if (profile.role === 'admin' || profile.role === 'ops_manager') {
+          setCurrentRole('operations');
+          setCurrentPage('admin');
+          showToast(`Welcome, ${profile.full_name}! Operations Hub unlocked.`, 'success');
+        } else if (profile.role === 'technician') {
+          setCurrentRole('employee');
+          const matchedEmp = employees.find((e) => e.user_id === profile.id || e.id === profile.id);
+          if (matchedEmp) setCurrentEmployeeIdState(matchedEmp.id);
+          setCurrentPage('employee');
+          showToast(`Welcome, ${profile.full_name}! Technician Hub unlocked.`, 'success');
+        } else if (profile.role === 'vendor') {
+          setCurrentRole('vendor');
+          const matchedVnd = vendors.find((v) => v.user_id === profile.id || v.id === profile.id);
+          if (matchedVnd) setCurrentVendorIdState(matchedVnd.id);
+          setCurrentPage('vendor');
+          showToast(`Welcome, ${profile.full_name}! Partner Portal unlocked.`, 'success');
+        }
+        return true;
+      } catch {
+        handleFailedLogin();
+        return false;
+      }
+    }
+
+    // Local offline mock fallback (DEV only)
+    if (!import.meta.env.DEV) {
+      showToast('Service not configured. Please contact administrator.', 'error');
+      return false;
+    }
+
+    if (email.includes('ops') || email.includes('admin')) {
+      if (opsSettings.password && password === opsSettings.password) {
+        handleSuccessfulLogin();
+        setCurrentRole('operations');
+        setCurrentPage('admin');
+        showToast('Welcome, Operations Command Supervisor!', 'success');
+        return true;
+      }
+    }
+
+    handleFailedLogin();
     return false;
   };
 
-  const logoutStaff = () => {
-    setCurrentEmployeeId(null);
-    setCurrentVendorId(null);
-    setCurrentRole('customer');
+  const logoutStaff = async () => {
+    isExplicitLogoutRef.current = true;
+    if (isSupabaseConfigured()) {
+      try {
+        await supabase.auth.signOut();
+      } catch (err) {
+        console.warn('Supabase logout notice:', err);
+      }
+    }
+    closeAllModals();
+    clearSessionData();
     setCurrentPage('home');
-    showToast('Signed out of staff / partner portal', 'info');
+    if (typeof window !== 'undefined') {
+      window.history.replaceState(null, '', '/');
+    }
+    showToast('Signed out of staff workspace', 'info');
+    setTimeout(() => {
+      isExplicitLogoutRef.current = false;
+    }, 500);
   };
 
   const updateCustomerStatus = (customerId: string, status: CustomerRecord['status']) => {
@@ -1126,10 +1486,21 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     showToast(`Customer status updated to ${status}`, 'info');
   };
 
+  const releaseCustomerPhone = (userId: string) => {
+    setCustomers((prev) =>
+      prev.map((c) =>
+        c.user_id === userId || c.id === userId
+          ? { ...c, phone: '' }
+          : c
+      )
+    );
+  };
+
   const addComplaint = (complaint: Partial<ComplaintRecord>) => {
     const newId = `cmp-${Date.now()}`;
     const full: ComplaintRecord = {
       id: newId,
+      user_id: complaint.user_id || authProfile?.id || currentUser?.user_id || currentUser?.id,
       requestId: complaint.requestId || 'PB-GENERAL',
       customerName: complaint.customerName || 'Anonymous',
       customerPhone: complaint.customerPhone || '',
@@ -1161,6 +1532,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const recordPayment = (pay: Partial<PaymentRecord>) => {
     const newRecord: PaymentRecord = {
       id: `pay-${Date.now()}`,
+      user_id: pay.user_id || authProfile?.id || currentUser?.user_id || currentUser?.id,
       requestId: pay.requestId || 'PB-DIRECT',
       customerName: pay.customerName || 'Customer',
       amount: pay.amount || 0,
@@ -1450,12 +1822,17 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     preferredTimeSlot: string;
     notes?: string;
   }): string => {
+    if (!isSupabaseConfigured() && !import.meta.env.DEV) {
+      showToast('Service not configured. Please contact administrator.', 'error');
+      return '';
+    }
     if (cart.length === 0) return '';
     const newId = `PB-${Math.floor(1000 + Math.random() * 9000)}`;
     const now = new Date().toLocaleString('en-IN', { dateStyle: 'short', timeStyle: 'short' });
 
     const newRequest: ServiceRequest = {
       id: newId,
+      user_id: authProfile?.id || currentUser?.user_id || currentUser?.id,
       customerName: details.customerName,
       customerPhone: details.customerPhone,
       locality: details.locality,
@@ -1515,11 +1892,16 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     preferredTimeSlot: string;
     category?: string;
   }): string => {
+    if (!isSupabaseConfigured() && !import.meta.env.DEV) {
+      showToast('Service not configured. Please contact administrator.', 'error');
+      return '';
+    }
     const newId = `PB-CUST-${Math.floor(1000 + Math.random() * 9000)}`;
     const now = new Date().toLocaleString('en-IN', { dateStyle: 'short', timeStyle: 'short' });
 
     const newRequest: ServiceRequest = {
       id: newId,
+      user_id: authProfile?.id || currentUser?.user_id || currentUser?.id,
       customerName: details.customerName,
       customerPhone: details.customerPhone,
       locality: details.locality,
@@ -1581,11 +1963,16 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     preferredStartDate: string;
     description: string;
   }): string => {
+    if (!isSupabaseConfigured() && !import.meta.env.DEV) {
+      showToast('Service not configured. Please contact administrator.', 'error');
+      return '';
+    }
     const newId = `PRJ-${Math.floor(500 + Math.random() * 499)}`;
     const now = new Date().toLocaleString('en-IN', { dateStyle: 'short', timeStyle: 'short' });
 
     const newProject: HomeProjectRequest = {
       id: newId,
+      user_id: authProfile?.id || currentUser?.user_id || currentUser?.id,
       customerName: details.customerName,
       customerPhone: details.customerPhone,
       locality: details.locality,
@@ -2122,17 +2509,40 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     showToast('Job observation note saved.', 'success');
   };
 
-  const vendorCompleteJob = (
+  const vendorCompleteJob = async (
     requestId: string,
     paymentMode: 'CASH' | 'UPI' | 'ONLINE',
     notes?: string,
-    photos?: string[]
+    photos?: string[],
+    customerOtp?: string
   ) => {
     const now = new Date().toLocaleString('en-IN', { dateStyle: 'short', timeStyle: 'short' });
     const req = requests.find((r) => r.id === requestId);
     if (!req) return;
     const currentVendor = vendors.find((v) => v.id === currentVendorId);
     const vendorName = currentVendor?.businessName || req.assignedTo?.name || 'Vendor Partner';
+
+    // SEC-05: Mandatory customer verification OTP via database RPC verify_job_otp()
+    if (!customerOtp || !customerOtp.trim()) {
+      showToast('Customer verification OTP is required to complete this job.', 'error');
+      return;
+    }
+
+    const otpResult = await verifyJobOtpViaRpc(requestId, customerOtp.trim());
+    if (!otpResult.success) {
+      if (otpResult.code === 'LOCKED') {
+        showToast(
+          'Verification Locked: 5 failed OTP attempts. Please contact the operations team to unlock this booking.',
+          'error'
+        );
+      } else {
+        showToast(otpResult.message || 'Invalid customer OTP provided.', 'error');
+      }
+      return;
+    }
+
+    // SEC-02: Record payment via database RPC record_payment()
+    await recordPaymentViaRpc(requestId, req.total, paymentMode);
 
     setRequests((prev) =>
       prev.map((r) => {
@@ -2159,7 +2569,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
                 status: 'COMPLETED',
                 timestamp: now,
                 updatedBy: `${vendorName} (Partner Portal)`,
-                note: `Job completed on site. Payment collected via ${paymentMode} (₹${r.total}).`
+                note: `Job completed on site. Verified via customer OTP. Collected via ${paymentMode} (₹${r.total}).`
               }
             ]
           };
@@ -2199,11 +2609,11 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       'JOB_COMPLETED_BY_VENDOR',
       'SERVICE_REQUEST',
       requestId,
-      `${vendorName} completed job ${requestId}. Collected ₹${req.total} via ${paymentMode}.`,
+      `${vendorName} completed job ${requestId}. Verified via customer OTP. Collected ₹${req.total} via ${paymentMode}.`,
       vendorName
     );
 
-    showToast(`Job ${requestId} completed! Payment of ₹${req.total} logged via ${paymentMode}.`, 'success');
+    showToast(`Job ${requestId} completed! Verified via customer OTP and payment of ₹${req.total} logged.`, 'success');
   };
 
   // Employees
@@ -2398,13 +2808,14 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     showToast('Work started! Status updated to In Progress.', 'info');
   };
 
-  const employeeCompleteWork = (
+  const employeeCompleteWork = async (
     requestId: string,
     completionNotes: string,
     completionPhotos: string[],
     materialInfo?: string,
     partsUsed?: { name: string; quantity: number; cost: number }[],
-    paymentCollectedMode?: 'CASH' | 'UPI' | 'ONLINE'
+    paymentCollectedMode?: 'CASH' | 'UPI' | 'ONLINE',
+    customerOtp?: string
   ) => {
     const now = new Date().toLocaleString('en-IN', { dateStyle: 'short', timeStyle: 'short' });
     const req = requests.find((r) => r.id === requestId);
@@ -2412,6 +2823,28 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     const currentEmp = employees.find((e) => e.id === currentEmployeeId);
     const empName = currentEmp?.name || req.assignedTo?.name || 'Staff Technician';
     const payMode = paymentCollectedMode || req.paymentMode || 'UPI';
+
+    // SEC-05: Mandatory customer verification OTP via database RPC verify_job_otp()
+    if (!customerOtp || !customerOtp.trim()) {
+      showToast('Customer verification OTP is required to complete this job.', 'error');
+      return;
+    }
+
+    const otpResult = await verifyJobOtpViaRpc(requestId, customerOtp.trim());
+    if (!otpResult.success) {
+      if (otpResult.code === 'LOCKED') {
+        showToast(
+          'Verification Locked: 5 failed OTP attempts. Please contact the operations team to unlock this booking.',
+          'error'
+        );
+      } else {
+        showToast(otpResult.message || 'Invalid customer OTP provided.', 'error');
+      }
+      return;
+    }
+
+    // SEC-02: Record payment via database RPC record_payment()
+    await recordPaymentViaRpc(requestId, req.total, payMode);
 
     setRequests((prev) =>
       prev.map((r) => {
@@ -2440,7 +2873,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
                 status: 'COMPLETED',
                 timestamp: now,
                 updatedBy: `${empName} (Staff App)`,
-                note: `Job completed. Verified by staff technician. Collected via ${payMode} (₹${r.total}).`
+                note: `Job completed. Verified by customer OTP. Collected via ${payMode} (₹${r.total}).`
               }
             ]
           };
@@ -2480,11 +2913,11 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       'JOB_COMPLETED_BY_EMPLOYEE',
       'SERVICE_REQUEST',
       requestId,
-      `${empName} completed job ${requestId}. Collected ₹${req.total} via ${payMode}. Material: ${materialInfo || 'None'}.`,
+      `${empName} completed job ${requestId}. Verified via customer OTP. Collected ₹${req.total} via ${payMode}. Material: ${materialInfo || 'None'}.`,
       empName
     );
 
-    showToast(`Job ${requestId} finalized! Completion record and payment logged.`, 'success');
+    showToast(`Job ${requestId} finalized! Verified via customer OTP and payment recorded.`, 'success');
   };
 
   // Projects
@@ -2689,6 +3122,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         customers,
         addCustomer,
         updateCustomerStatus,
+        releaseCustomerPhone,
         complaints,
         addComplaint,
         resolveComplaint,
@@ -2711,6 +3145,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         setSelectedDetailServiceId,
         isAuthModalOpen,
         setIsAuthModalOpen,
+        closeAllModals,
+        authProfile,
         currentUser,
         setCurrentUser,
         loginCustomer,
@@ -2733,7 +3169,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         isDPDPDataRightsOpen,
         setIsDPDPDataRightsOpen,
         dbStatus,
-        refreshDbConnection
+        refreshDbConnection,
+        isLoadingData,
+        dataLoadError
       }}
     >
       {children}

@@ -12,6 +12,7 @@ import {
   Calendar,
   AlertCircle
 } from 'lucide-react';
+import { CustomerOtpDisplay } from './CustomerOtpDisplay';
 
 export const OrderTrackerModal: React.FC = () => {
   const {
@@ -156,6 +157,14 @@ export const OrderTrackerModal: React.FC = () => {
               </a>
             </div>
           )}
+
+          {/* Customer Completion Verification OTP */}
+          <CustomerOtpDisplay
+            requestId={order.id}
+            status={order.status}
+            bookingUserId={order.user_id}
+            customerPhone={order.customerPhone}
+          />
 
           {/* Lifecycle Pipeline */}
           <div className="space-y-3">

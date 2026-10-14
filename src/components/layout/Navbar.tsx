@@ -1,24 +1,52 @@
-import React from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useApp } from '../../context/AppContext';
+import { SERVICE_AVAILABLE_ZONES } from '../../data/initialData';
 import {
   MapPin,
-  ShoppingBag,
-  ShieldCheck,
-  ClipboardList,
+  Phone,
+  MessageCircle,
+  User,
+  ChevronDown,
   Menu,
   X,
-  User,
   ArrowRight,
+  ShieldCheck,
+  Check,
+  Wrench,
+  Zap,
+  Droplets,
+  Hammer,
   Sparkles,
+  Paintbrush,
+  ShieldAlert,
   HardHat,
-  Wrench
+  PackageCheck,
+  ShoppingBag,
+  LogOut,
+  ChevronRight,
+  ExternalLink,
+  Briefcase
 } from 'lucide-react';
 
+/**
+ * Redesigned UrbanCare Solution Header:
+ * - Single sticky desktop header (~72px tall), shrinks to ~64px on scroll with subtle shadow.
+ * - Single brand: UrbanCare Solution ("Your Space | Our Care") with logo. Removed "Tricity Civic Hub".
+ * - Location pill ("Sector 94 ▾") with full area names inside inline dropdown for Sectors 94–111.
+ * - Single-line nav: Services (mega-menu with icons), Home Projects, How It Works, Become a Partner.
+ * - Call & WhatsApp direct action icon buttons (tel: and wa.me).
+ * - Sign In dropdown (Resident / Staff & Partner).
+ * - Filled primary CTA button: "Book a Service".
+ * - "Track Order" link shown strictly for logged-in users with active orders.
+ * - Mobile: Top bar (logo, location pill, hamburger) + Full-screen drawer with services listed first.
+ * - Full accessibility: WCAG AA contrast, visible focus rings, skip-to-content link, keyboard navigation.
+ */
 export const Navbar: React.FC = () => {
   const {
     currentRole,
     setCurrentRole,
     currentLocality,
+    setCurrentLocality,
     setIsLocalityModalOpen,
     currentPage,
     setCurrentPage,
@@ -32,495 +60,1021 @@ export const Navbar: React.FC = () => {
     setIsAuthModalOpen,
     employees,
     vendors,
-    logoutStaff
+    logoutStaff,
+    logoutCustomer
   } = useApp();
+
+  // Scroll shrink state
+  const [isScrolled, setIsScrolled] = useState(false);
+
+  // Dropdown states
+  const [isLocationDropdownOpen, setIsLocationDropdownOpen] = useState(false);
+  const [isServicesMegaMenuOpen, setIsServicesMegaMenuOpen] = useState(false);
+  const [isSignInDropdownOpen, setIsSignInDropdownOpen] = useState(false);
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+
+  // Dropdown container refs for click-outside detection
+  const locationRef = useRef<HTMLDivElement>(null);
+  const megaMenuRef = useRef<HTMLDivElement>(null);
+  const signInRef = useRef<HTMLDivElement>(null);
 
   const currentEmployee = employees.find((e) => e.id === currentEmployeeId);
   const currentVendor = vendors.find((v) => v.id === currentVendorId);
 
-  const [mobileMenuOpen, setMobileMenuOpen] = React.useState(false);
+  // Active customer order for logged-in tracker link
+  const activeCustomerOrder = requests.find(
+    (r) => r.status !== 'COMPLETED' && r.status !== 'CANCELLED' && r.status !== 'CLOSED'
+  );
 
-  // Count active requests pending operations
-  const pendingRequestsCount = requests.filter(
-    (r) => r.status === 'NEW' || r.status === 'UNDER REVIEW' || r.status === 'READY FOR ASSIGNMENT'
-  ).length;
+  // Derive short sector name for the location pill (e.g., "Sector 94 ▾")
+  const shortSectorName = React.useMemo(() => {
+    if (!currentLocality) return 'Sector 94';
+    const match = currentLocality.match(/Sector[s]?\s+\d+([–-]\d+)?/i);
+    return match ? match[0] : currentLocality.split(' (')[0] || 'Sector 94';
+  }, [currentLocality]);
 
-  // Count pending assignments specifically waiting for active vendor
-  const pendingVendorRequestsCount = requests.filter(
-    (r) => r.assignedTo?.id === (currentVendorId || 'vnd-1') && r.status === 'ASSIGNED'
-  ).length;
+  // Handle scroll detection for shrink & subtle shadow
+  useEffect(() => {
+    const handleScroll = () => {
+      if (window.scrollY > 20) {
+        setIsScrolled(true);
+      } else {
+        setIsScrolled(false);
+      }
+    };
 
-  // Count pending jobs specifically assigned to active employee
-  const pendingEmployeeJobsCount = requests.filter(
-    (r) => r.assignedTo?.id === (currentEmployeeId || 'emp-1') && r.status === 'ASSIGNED'
-  ).length;
+    window.addEventListener('scroll', handleScroll, { passive: true });
+    return () => window.removeEventListener('scroll', handleScroll);
+  }, []);
 
-  const activeCustomerOrder = requests[0];
+  // Handle click outside to close dropdowns
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      const target = event.target as Node;
+      if (locationRef.current && !locationRef.current.contains(target)) {
+        setIsLocationDropdownOpen(false);
+      }
+      if (megaMenuRef.current && !megaMenuRef.current.contains(target)) {
+        setIsServicesMegaMenuOpen(false);
+      }
+      if (signInRef.current && !signInRef.current.contains(target)) {
+        setIsSignInDropdownOpen(false);
+      }
+    };
+
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, []);
+
+  // Handle escape key to close open menus
+  useEffect(() => {
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        setIsLocationDropdownOpen(false);
+        setIsServicesMegaMenuOpen(false);
+        setIsSignInDropdownOpen(false);
+        setMobileMenuOpen(false);
+      }
+    };
+
+    document.addEventListener('keydown', handleKeyDown);
+    return () => document.removeEventListener('keydown', handleKeyDown);
+  }, []);
+
+  // Prevent background scroll when mobile drawer is open
+  useEffect(() => {
+    if (mobileMenuOpen) {
+      document.body.style.overflow = 'hidden';
+    } else {
+      document.body.style.overflow = '';
+    }
+    return () => {
+      document.body.style.overflow = '';
+    };
+  }, [mobileMenuOpen]);
+
+  // Handle primary "Book a Service" action
+  const handleBookService = () => {
+    setIsServicesMegaMenuOpen(false);
+    setMobileMenuOpen(false);
+    if (currentPage === 'home') {
+      const catalogEl = document.getElementById('services-catalog-view');
+      if (catalogEl) {
+        catalogEl.scrollIntoView({ behavior: 'smooth' });
+        return;
+      }
+    }
+    setCurrentPage('services');
+  };
+
+  // Curated categories for the Services Mega-Menu
+  const megaMenuCategories = [
+    {
+      id: 'ac-appliances',
+      name: 'AC & Appliances',
+      desc: 'AC service, gas refill, RO & fridge repair',
+      icon: Wrench,
+      accent: 'bg-emerald-50 text-[#0F3D2E]'
+    },
+    {
+      id: 'electrical',
+      name: 'Electrical Care',
+      desc: 'Fans, switchboards, wiring & MCB diagnostics',
+      icon: Zap,
+      accent: 'bg-amber-50 text-amber-800'
+    },
+    {
+      id: 'plumbing',
+      name: 'Plumbing Services',
+      desc: 'Motors, taps, leakages & bathroom fittings',
+      icon: Droplets,
+      accent: 'bg-sky-50 text-sky-800'
+    },
+    {
+      id: 'carpentry',
+      name: 'Carpentry & Handyman',
+      desc: 'Door locks, handles, furniture & drill assembly',
+      icon: Hammer,
+      accent: 'bg-stone-50 text-stone-800'
+    },
+    {
+      id: 'fabrication',
+      name: 'Gate & Grill Fabrication',
+      desc: 'Welding, safety balcony grills & gate repairs',
+      icon: ShieldCheck,
+      accent: 'bg-indigo-50 text-indigo-800'
+    },
+    {
+      id: 'cleaning',
+      name: 'Home Deep Cleaning',
+      desc: 'Kitchen degreasing, bathroom descaling & sofas',
+      icon: Sparkles,
+      accent: 'bg-purple-50 text-purple-800'
+    },
+    {
+      id: 'painting',
+      name: 'Painting & Waterproofing',
+      desc: 'Damp treatment, wall touch-ups & full colors',
+      icon: Paintbrush,
+      accent: 'bg-rose-50 text-rose-800'
+    },
+    {
+      id: 'pest-control',
+      name: 'Pest Control Shield',
+      desc: 'Termite drill shield & herbal cockroach gel',
+      icon: ShieldAlert,
+      accent: 'bg-orange-50 text-orange-800'
+    }
+  ];
 
   return (
     <>
-      {/* Top persistent Single-Role Display Bar */}
-      <div className="bg-[#003523] text-white text-xs border-b border-[#144d37]/50 sticky top-0 z-50">
-        <div className="max-w-7xl mx-auto px-4 py-1.5 flex items-center justify-between">
-          <div className="flex items-center space-x-2">
-            <span className="inline-flex items-center px-1.5 py-0.5 rounded bg-[#fe932c] text-[#002114] font-bold text-[10px] tracking-wide uppercase">
-              Tricity Civic Hub
-            </span>
+      {/* 1. Accessible Skip-to-Content Link */}
+      <a
+        href="#main-content"
+        className="sr-only focus:not-sr-only focus:fixed focus:top-3 focus:left-4 z-50 bg-[#0F3D2E] text-white px-4 py-2 rounded-lg font-semibold text-xs shadow-xl focus:outline-none focus:ring-2 focus:ring-[#F28C28]"
+      >
+        Skip to main content
+      </a>
+
+      {/* 2. Single Sticky Desktop & Mobile Header */}
+      <header
+        role="banner"
+        className={`sticky top-0 z-40 bg-white/98 backdrop-blur-md transition-all duration-200 border-b ${
+          isScrolled
+            ? 'h-16 shadow-md border-gray-200/90'
+            : 'h-[72px] shadow-xs border-gray-100'
+        }`}
+      >
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 h-full flex items-center justify-between gap-3 sm:gap-4 font-['Inter',sans-serif]">
+          {/* LEFT: Logo & Location Pill */}
+          <div className="flex items-center space-x-3 sm:space-x-4 shrink-0">
+            {/* Brand Logo & Tagline (Single Brand: UrbanCare Solution) */}
             <button
-              onClick={() => setIsLocalityModalOpen(true)}
-              className="hidden sm:inline-flex items-center space-x-1 text-gray-200 hover:text-white transition-colors cursor-pointer"
-              title="Click to select or view covered sectors"
+              onClick={() => {
+                setCurrentPage('home');
+                window.scrollTo({ top: 0, behavior: 'smooth' });
+              }}
+              className="text-left group flex items-center space-x-2.5 focus-visible:ring-2 focus-visible:ring-[#0F3D2E] focus-visible:outline-none rounded-xl p-1"
+              aria-label="UrbanCare Solution Home"
             >
-              <span className="hover:underline">Service Available In Sectors 94 to 111</span>
-              <span className="text-[10px] text-[#b6efd1]">▾</span>
-            </button>
-          </div>
-
-          {/* Single Assigned Role Display - Strict Isolation */}
-          <div className="flex items-center space-x-2">
-            {currentRole === 'customer' && (
-              currentUser ? (
-                <div className="flex items-center space-x-2">
-                  <span className="text-[11px] text-gray-300 hidden md:inline">Account:</span>
-                  <div className="inline-flex items-center space-x-1.5 px-2.5 py-0.5 rounded-lg bg-[#144d37] border border-[#336851]/60 text-white font-semibold text-[11px]">
-                    <User className="w-3 h-3 text-[#b6efd1]" />
-                    <span>Resident: {currentUser.name}</span>
-                    <span className="text-[10px] text-[#b6efd1] font-bold hidden sm:inline">
-                      ({currentUser.locality.split(',')[0]})
-                    </span>
-                  </div>
-                </div>
-              ) : (
-                <div className="flex items-center space-x-2">
-                  <button
-                    onClick={() => setIsAuthModalOpen(true)}
-                    className="text-[11px] text-[#b6efd1] hover:text-white font-semibold flex items-center space-x-1 cursor-pointer"
-                  >
-                    <User className="w-3 h-3" />
-                    <span>Resident Sign In</span>
-                  </button>
-                  <span className="text-white/40">·</span>
-                  <button
-                    onClick={() => setIsAuthModalOpen(true)}
-                    className="text-[11px] text-gray-300 hover:text-white transition-colors cursor-pointer"
-                  >
-                    Staff & Partner Login
-                  </button>
-                </div>
-              )
-            )}
-
-            {currentRole === 'employee' && (
-              <div className="flex items-center space-x-2">
-                <span className="text-[11px] text-gray-300 hidden md:inline">Your Role:</span>
-                <div className="inline-flex items-center space-x-1.5 px-2.5 py-0.5 rounded-lg bg-[#144d37] border border-[#336851]/60 text-white font-semibold text-[11px]">
-                  <Wrench className="w-3 h-3 text-[#b6efd1]" />
-                  <span>Tech Hub: {currentEmployee?.name || 'Technician'}</span>
-                  <span className="text-[10px] text-[#b6efd1] font-bold">
-                    ({currentEmployee?.employeeCode || 'EMP'})
-                  </span>
-                  {pendingEmployeeJobsCount > 0 && (
-                    <span className="bg-[#fe932c] text-[#002114] text-[10px] font-bold px-1.5 py-0.2 rounded-full ml-1 animate-pulse">
-                      {pendingEmployeeJobsCount} Active
-                    </span>
-                  )}
-                </div>
-                <button
-                  onClick={() => logoutStaff()}
-                  className="text-[11px] text-red-200 hover:text-white font-semibold ml-2 underline cursor-pointer"
-                >
-                  Exit Hub
-                </button>
-              </div>
-            )}
-
-            {currentRole === 'vendor' && (
-              <div className="flex items-center space-x-2">
-                <span className="text-[11px] text-gray-300 hidden md:inline">Your Role:</span>
-                <div className="inline-flex items-center space-x-1.5 px-2.5 py-0.5 rounded-lg bg-[#144d37] border border-[#336851]/60 text-white font-semibold text-[11px]">
-                  <HardHat className="w-3 h-3 text-[#fe932c]" />
-                  <span>Vendor Hub: {currentVendor?.businessName || 'Partner'}</span>
-                  {pendingVendorRequestsCount > 0 && (
-                    <span className="bg-[#fe932c] text-[#002114] text-[10px] font-bold px-1.5 py-0.2 rounded-full ml-1 animate-pulse">
-                      {pendingVendorRequestsCount} Dispatches
-                    </span>
-                  )}
-                </div>
-                <button
-                  onClick={() => logoutStaff()}
-                  className="text-[11px] text-red-200 hover:text-white font-semibold ml-2 underline cursor-pointer"
-                >
-                  Exit Hub
-                </button>
-              </div>
-            )}
-
-            {currentRole === 'operations' && (
-              <div className="flex items-center space-x-2">
-                <span className="text-[11px] text-gray-300 hidden md:inline">Your Role:</span>
-                <div className="inline-flex items-center space-x-1.5 px-2.5 py-0.5 rounded-lg bg-[#144d37] border border-[#336851]/60 text-white font-semibold text-[11px]">
-                  <ShieldCheck className="w-3 h-3 text-[#fe932c]" />
-                  <span>Operations Lead: Harman (Central Dispatch)</span>
-                  {pendingRequestsCount > 0 && (
-                    <span className="bg-[#fe932c] text-[#002114] text-[10px] font-bold px-1.5 py-0.2 rounded-full ml-1">
-                      {pendingRequestsCount} Pending
-                    </span>
-                  )}
-                </div>
-                <button
-                  onClick={() => logoutStaff()}
-                  className="text-[11px] text-red-200 hover:text-white font-semibold ml-2 underline cursor-pointer"
-                >
-                  Exit Hub
-                </button>
-              </div>
-            )}
-          </div>
-        </div>
-      </div>
-
-      {/* Main Top Navigation Header */}
-      <header className="bg-white border-b border-[#c0c9c2]/40 sticky top-[31px] z-40 backdrop-blur-md bg-white/95">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 h-16 flex items-center justify-between">
-          {/* Zone 1: Brand Wordmark & Locality */}
-          <div className="flex items-center space-x-3">
-            <button
-              onClick={() => setCurrentPage('home')}
-              className="text-left group flex items-center space-x-2"
-            >
-              <div className="w-9 h-9 rounded-xl bg-[#003523] text-white flex items-center justify-center font-bold text-lg shadow-sm group-hover:bg-[#144d37] transition-colors">
+              <div className="w-9 h-9 sm:w-10 sm:h-10 rounded-xl bg-[#0F3D2E] text-white flex items-center justify-center font-bold text-lg shadow-sm group-hover:bg-[#144d37] transition-all">
                 U
               </div>
-              <div>
-                <div className="text-lg font-bold text-[#003523] tracking-tight leading-none">
+              <div className="flex flex-col">
+                <span className="text-base sm:text-lg font-bold text-[#0F3D2E] tracking-tight leading-none">
                   UrbanCare Solution
-                </div>
-                <div className="text-[11px] text-[#707973] font-medium leading-tight">
+                </span>
+                <span className="text-[10px] sm:text-[11px] text-[#5A6A60] font-medium leading-tight mt-0.5">
                   Your Space | Our Care
-                </div>
+                </span>
               </div>
             </button>
 
-            {/* Locality Selector Chip */}
-            <button
-              onClick={() => setIsLocalityModalOpen(true)}
-              className="hidden lg:flex items-center space-x-1.5 px-3 py-1.5 rounded-full bg-[#f2f3ff] hover:bg-[#eaedff] border border-[#c0c9c2]/50 text-xs font-semibold text-[#131b2e] transition-colors ml-2"
-              title="Change Locality"
-            >
-              <MapPin className="w-3.5 h-3.5 text-[#003523]" />
-              <span className="truncate max-w-[140px]">{currentLocality}</span>
-              <span className="text-[10px] text-[#707973]">▼</span>
-            </button>
+            {/* Location Pill with Dropdown (Desktop & Tablet) */}
+            <div className="relative" ref={locationRef}>
+              <button
+                type="button"
+                onClick={() => setIsLocationDropdownOpen(!isLocationDropdownOpen)}
+                aria-expanded={isLocationDropdownOpen}
+                aria-haspopup="listbox"
+                aria-label={`Select location, currently ${shortSectorName}`}
+                className="inline-flex items-center space-x-1.5 px-2.5 sm:px-3 py-1.5 rounded-full bg-gray-50 hover:bg-gray-100 border border-gray-200/80 text-xs font-semibold text-[#0F3D2E] transition-colors focus-visible:ring-2 focus-visible:ring-[#0F3D2E] focus-visible:outline-none cursor-pointer"
+                title="Select serving sector"
+              >
+                <MapPin className="w-3.5 h-3.5 text-[#0F3D2E] shrink-0" />
+                <span className="whitespace-nowrap font-medium text-gray-900">
+                  {shortSectorName}
+                </span>
+                <ChevronDown
+                  className={`w-3.5 h-3.5 text-gray-500 transition-transform duration-150 ${
+                    isLocationDropdownOpen ? 'rotate-180' : ''
+                  }`}
+                />
+              </button>
+
+              {/* Location Dropdown with Full Area Names */}
+              {isLocationDropdownOpen && (
+                <div
+                  role="listbox"
+                  className="absolute left-0 top-full mt-2 w-80 sm:w-96 bg-white rounded-2xl shadow-xl border border-gray-100 p-3 z-50 animate-in fade-in slide-in-from-top-1 duration-150"
+                >
+                  <div className="px-3 py-2 border-b border-gray-100">
+                    <div className="text-xs font-bold text-[#0F3D2E] uppercase tracking-wider">
+                      Serving Sectors 94–111, Mohali
+                    </div>
+                    <div className="text-[11px] text-gray-500 mt-0.5">
+                      JLPL, GMADA, Emaar & TDI corridors • 20–30 min dispatch
+                    </div>
+                  </div>
+
+                  <div className="max-h-64 overflow-y-auto py-1 space-y-1">
+                    {SERVICE_AVAILABLE_ZONES.map((zone) => {
+                      const isSelected = currentLocality === zone.name;
+                      return (
+                        <button
+                          key={zone.id}
+                          role="option"
+                          aria-selected={isSelected}
+                          onClick={() => {
+                            setCurrentLocality(zone.name);
+                            setIsLocationDropdownOpen(false);
+                          }}
+                          className={`w-full text-left px-3 py-2 rounded-xl text-xs flex items-center justify-between transition-colors ${
+                            isSelected
+                              ? 'bg-emerald-50 text-[#0F3D2E] font-bold'
+                              : 'text-gray-700 hover:bg-gray-50 font-medium'
+                          }`}
+                        >
+                          <div className="pr-2">
+                            <div className="text-xs text-gray-900 font-semibold">{zone.name}</div>
+                            <div className="text-[11px] text-gray-500 truncate max-w-[260px]">
+                              {zone.description}
+                            </div>
+                          </div>
+                          {isSelected && (
+                            <Check className="w-4 h-4 text-[#0F3D2E] shrink-0" />
+                          )}
+                        </button>
+                      );
+                    })}
+                  </div>
+
+                  <div className="pt-2 mt-1 border-t border-gray-100 flex items-center justify-between px-2">
+                    <span className="text-[11px] text-gray-500">Need another sector?</span>
+                    <button
+                      onClick={() => {
+                        setIsLocalityModalOpen(true);
+                        setIsLocationDropdownOpen(false);
+                      }}
+                      className="text-xs font-semibold text-[#0F3D2E] hover:underline"
+                    >
+                      View all coverage →
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
           </div>
 
-          {/* Zone 2: Navigation Links */}
-          <nav className="hidden md:flex items-center space-x-6 text-sm font-semibold text-[#404943]">
-            <button
-              onClick={() => setCurrentPage('home')}
-              className={`hover:text-[#003523] transition-colors ${
-                currentPage === 'home' ? 'text-[#003523] border-b-2 border-[#003523] pb-1 font-bold' : ''
-              }`}
-            >
-              Home
-            </button>
-            <button
-              onClick={() => setCurrentPage('services')}
-              className={`hover:text-[#003523] transition-colors ${
-                currentPage === 'services' ? 'text-[#003523] border-b-2 border-[#003523] pb-1 font-bold' : ''
-              }`}
-            >
-              Services
-            </button>
+          {/* CENTER: Navigation Links (Single Line, 15-16px, Inter) */}
+          <nav
+            role="navigation"
+            aria-label="Main menu"
+            className="hidden lg:flex items-center space-x-6 xl:space-x-7 text-[15px] font-medium text-[#2D3748] shrink-0"
+          >
+            {/* Services Mega-Menu Trigger */}
+            <div className="relative" ref={megaMenuRef}>
+              <button
+                type="button"
+                onClick={() => setIsServicesMegaMenuOpen(!isServicesMegaMenuOpen)}
+                aria-expanded={isServicesMegaMenuOpen}
+                aria-haspopup="true"
+                className={`flex items-center space-x-1 py-1.5 transition-colors focus-visible:ring-2 focus-visible:ring-[#0F3D2E] focus-visible:outline-none rounded-lg cursor-pointer ${
+                  isServicesMegaMenuOpen || currentPage === 'services'
+                    ? 'text-[#0F3D2E] font-bold'
+                    : 'hover:text-[#0F3D2E]'
+                }`}
+              >
+                <span>Services</span>
+                <ChevronDown
+                  className={`w-4 h-4 transition-transform duration-150 ${
+                    isServicesMegaMenuOpen ? 'rotate-180' : ''
+                  }`}
+                />
+              </button>
+
+              {/* Services Mega-Menu Popover */}
+              {isServicesMegaMenuOpen && (
+                <div
+                  className="absolute left-1/2 -translate-x-1/2 top-full mt-3 w-[720px] bg-white rounded-2xl shadow-2xl border border-gray-100 p-6 z-50 animate-in fade-in slide-in-from-top-2 duration-150"
+                  role="region"
+                  aria-label="Services Mega Menu"
+                >
+                  <div className="flex items-center justify-between pb-3 mb-3 border-b border-gray-100">
+                    <div>
+                      <h3 className="text-sm font-bold text-[#0F3D2E]">
+                        Doorstep Home Services & Repairs
+                      </h3>
+                      <p className="text-xs text-gray-500">
+                        Verified local technicians across Sectors 94–111 • ₹0 Advance
+                      </p>
+                    </div>
+                    <button
+                      onClick={() => {
+                        setCurrentPage('services');
+                        setIsServicesMegaMenuOpen(false);
+                      }}
+                      className="text-xs font-semibold text-[#0F3D2E] hover:underline flex items-center space-x-1"
+                    >
+                      <span>All 35+ Services</span>
+                      <ArrowRight className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+
+                  {/* 2-Column Mega-Menu Services Grid */}
+                  <div className="grid grid-cols-2 gap-3">
+                    {megaMenuCategories.map((cat) => {
+                      const Icon = cat.icon;
+                      return (
+                        <button
+                          key={cat.id}
+                          onClick={() => {
+                            setCurrentPage('services');
+                            setIsServicesMegaMenuOpen(false);
+                          }}
+                          className="flex items-start space-x-3 p-2.5 rounded-xl text-left hover:bg-gray-50 transition-colors group focus-visible:ring-2 focus-visible:ring-[#0F3D2E] focus-visible:outline-none"
+                        >
+                          <div
+                            className={`w-9 h-9 rounded-xl flex items-center justify-center shrink-0 ${cat.accent} transition-transform group-hover:scale-105`}
+                          >
+                            <Icon className="w-4 h-4" />
+                          </div>
+                          <div>
+                            <div className="text-xs font-bold text-gray-900 group-hover:text-[#0F3D2E]">
+                              {cat.name}
+                            </div>
+                            <div className="text-[11px] text-gray-500 leading-snug">
+                              {cat.desc}
+                            </div>
+                          </div>
+                        </button>
+                      );
+                    })}
+                  </div>
+
+                  {/* Mega-menu Bottom Banner for Home Projects */}
+                  <div className="mt-4 pt-3 border-t border-gray-100 flex items-center justify-between bg-[#0F3D2E]/5 rounded-xl px-4 py-2.5">
+                    <div className="flex items-center space-x-2 text-xs font-semibold text-[#0F3D2E]">
+                      <HardHat className="w-4 h-4 text-[#F28C28]" />
+                      <span>Planning turnkey renovation or modular kitchen?</span>
+                    </div>
+                    <button
+                      onClick={() => {
+                        setCurrentPage('projects');
+                        setIsServicesMegaMenuOpen(false);
+                      }}
+                      className="text-xs font-bold text-[#0F3D2E] hover:underline"
+                    >
+                      View Home Projects →
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* Home Projects Link */}
             <button
               onClick={() => setCurrentPage('projects')}
-              className={`hover:text-[#003523] transition-colors ${
-                currentPage === 'projects' ? 'text-[#003523] border-b-2 border-[#003523] pb-1 font-bold' : ''
+              className={`py-1.5 transition-colors focus-visible:ring-2 focus-visible:ring-[#0F3D2E] focus-visible:outline-none rounded-lg cursor-pointer ${
+                currentPage === 'projects'
+                  ? 'text-[#0F3D2E] font-bold border-b-2 border-[#0F3D2E]'
+                  : 'hover:text-[#0F3D2E]'
               }`}
             >
               Home Projects
             </button>
+
+            {/* How It Works Link */}
             <button
               onClick={() => setCurrentPage('how-it-works')}
-              className={`hover:text-[#003523] transition-colors ${
-                currentPage === 'how-it-works' ? 'text-[#003523] border-b-2 border-[#003523] pb-1 font-bold' : ''
+              className={`py-1.5 transition-colors focus-visible:ring-2 focus-visible:ring-[#0F3D2E] focus-visible:outline-none rounded-lg cursor-pointer ${
+                currentPage === 'how-it-works'
+                  ? 'text-[#0F3D2E] font-bold border-b-2 border-[#0F3D2E]'
+                  : 'hover:text-[#0F3D2E]'
               }`}
             >
               How It Works
             </button>
+
+            {/* Become a Partner Link */}
             <button
               onClick={() => setCurrentPage('become-partner')}
-              className={`hover:text-[#003523] transition-colors ${
-                currentPage === 'become-partner' ? 'text-[#003523] border-b-2 border-[#003523] pb-1 font-bold' : ''
+              className={`py-1.5 transition-colors focus-visible:ring-2 focus-visible:ring-[#0F3D2E] focus-visible:outline-none rounded-lg cursor-pointer ${
+                currentPage === 'become-partner'
+                  ? 'text-[#0F3D2E] font-bold border-b-2 border-[#0F3D2E]'
+                  : 'hover:text-[#0F3D2E]'
               }`}
             >
               Become a Partner
             </button>
-            <button
-              onClick={() => setCurrentPage('about')}
-              className={`hover:text-[#003523] transition-colors ${
-                currentPage === 'about' ? 'text-[#003523] border-b-2 border-[#003523] pb-1 font-bold' : ''
-              }`}
-            >
-              About
-            </button>
           </nav>
 
-          {/* Zone 3: Actions (Order Tracker, Cart, Mobile Menu) */}
-          <div className="flex items-center space-x-3">
-            {/* Active order quick button if exists */}
-            {activeCustomerOrder && (
+          {/* RIGHT: Action Icons, Auth, Active Track & Primary CTA */}
+          <div className="flex items-center space-x-2 sm:space-x-3 shrink-0">
+            {/* Conditional "Track Order" link - STRICTLY for logged-in users with active order */}
+            {currentUser && activeCustomerOrder && (
               <button
                 onClick={() => setActiveTrackingRequestId(activeCustomerOrder.id)}
-                className="hidden sm:flex items-center space-x-1.5 px-3 py-1.5 rounded-lg bg-[#e2e7ff] text-[#003523] hover:bg-[#dae2fd] text-xs font-bold transition-all"
-                title="View Active Order"
+                className="hidden xl:inline-flex items-center space-x-1.5 px-2.5 py-1.5 rounded-lg bg-emerald-50 hover:bg-emerald-100 text-[#0F3D2E] border border-emerald-200 text-xs font-semibold transition-colors focus-visible:ring-2 focus-visible:ring-[#0F3D2E] focus-visible:outline-none"
+                title={`Track Order #${activeCustomerOrder.id}`}
+                aria-label={`Track active order #${activeCustomerOrder.id}`}
               >
-                <span className="w-2 h-2 rounded-full bg-[#fe932c] animate-pulse"></span>
-                <span>Track {activeCustomerOrder.id}</span>
+                <span className="w-2 h-2 rounded-full bg-[#F28C28] animate-pulse" />
+                <PackageCheck className="w-3.5 h-3.5 text-[#0F3D2E]" />
+                <span className="truncate max-w-[100px]">Track #{activeCustomerOrder.id}</span>
               </button>
             )}
 
-            {/* Basket Button - Visible strictly once user is logged in */}
-            {currentUser && currentRole === 'customer' && (
+            {/* Direct Click-to-Call Button */}
+            <a
+              href="tel:+918284018909"
+              className="p-2 sm:p-2.5 rounded-xl border border-gray-200 text-[#0F3D2E] hover:bg-gray-50 hover:border-[#0F3D2E] transition-all focus-visible:ring-2 focus-visible:ring-[#0F3D2E] focus-visible:outline-none"
+              aria-label="Call UrbanCare Support +91 8284018909"
+              title="Call UrbanCare: +91 8284018909"
+            >
+              <Phone className="w-4 h-4 text-[#0F3D2E]" />
+            </a>
+
+            {/* Direct Click-to-WhatsApp Button */}
+            <a
+              href="https://wa.me/918284018909"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="p-2 sm:p-2.5 rounded-xl border border-emerald-200 bg-emerald-50/60 text-emerald-800 hover:bg-emerald-100 hover:border-emerald-400 transition-all focus-visible:ring-2 focus-visible:ring-emerald-600 focus-visible:outline-none"
+              aria-label="Chat with UrbanCare on WhatsApp +91 8284018909"
+              title="WhatsApp: +91 8284018909"
+            >
+              <MessageCircle className="w-4 h-4 text-emerald-600" />
+            </a>
+
+            {/* Basket Button (if logged-in customer has items) */}
+            {currentUser && currentRole === 'customer' && cartTotal.itemCount > 0 && (
               <button
                 onClick={() => setIsCartDrawerOpen(true)}
-                className="relative p-2.5 rounded-xl bg-[#003523] text-white hover:bg-[#144d37] transition-all flex items-center space-x-2 shadow-sm animate-in fade-in"
+                className="relative p-2 sm:p-2.5 rounded-xl border border-[#0F3D2E] bg-[#0F3D2E] text-white hover:bg-[#144d37] transition-all focus-visible:ring-2 focus-visible:ring-[#0F3D2E] focus-visible:outline-none"
+                aria-label={`View Basket with ${cartTotal.itemCount} items`}
                 title="View Basket"
               >
                 <ShoppingBag className="w-4 h-4" />
-                <span className="hidden sm:inline text-xs font-bold">
-                  {cartTotal.itemCount > 0 ? `₹${cartTotal.total}` : 'Basket'}
+                <span className="absolute -top-1.5 -right-1.5 bg-[#F28C28] text-white text-[10px] font-bold w-4 h-4 rounded-full flex items-center justify-center shadow-xs">
+                  {cartTotal.itemCount}
                 </span>
-                {cartTotal.itemCount > 0 && (
-                  <span className="absolute -top-1.5 -right-1.5 bg-[#fe932c] text-[#002114] text-[10px] font-bold w-5 h-5 rounded-full flex items-center justify-center shadow-xs">
-                    {cartTotal.itemCount}
-                  </span>
-                )}
               </button>
             )}
 
-            {/* Profile / Login Icon Button */}
+            {/* Sign In Dropdown (Resident / Staff & Partner) */}
+            <div className="relative" ref={signInRef}>
+              <button
+                type="button"
+                onClick={() => setIsSignInDropdownOpen(!isSignInDropdownOpen)}
+                aria-expanded={isSignInDropdownOpen}
+                aria-haspopup="menu"
+                aria-label="User sign in and account menu"
+                className="flex items-center space-x-1.5 px-2.5 sm:px-3 py-2 rounded-xl border border-gray-200 hover:border-[#0F3D2E] text-[#0F3D2E] text-xs font-semibold transition-colors focus-visible:ring-2 focus-visible:ring-[#0F3D2E] focus-visible:outline-none cursor-pointer"
+              >
+                {/* User avatar or role glyph */}
+                <div className="w-5 h-5 rounded-md bg-[#0F3D2E] text-white flex items-center justify-center font-bold text-[10px]">
+                  {currentRole === 'employee' ? (
+                    'T'
+                  ) : currentRole === 'vendor' ? (
+                    'V'
+                  ) : currentRole === 'operations' ? (
+                    'O'
+                  ) : currentUser ? (
+                    currentUser.name.charAt(0)
+                  ) : (
+                    <User className="w-3 h-3 text-white" />
+                  )}
+                </div>
+                <span className="hidden sm:inline">
+                  {currentRole === 'employee'
+                    ? currentEmployee?.name.split(' ')[0] || 'Tech Hub'
+                    : currentRole === 'vendor'
+                    ? currentVendor?.businessName.split(' ')[0] || 'Vendor Hub'
+                    : currentRole === 'operations'
+                    ? 'Ops Desk'
+                    : currentUser
+                    ? currentUser.name.split(' ')[0]
+                    : 'Sign In'}
+                </span>
+                <ChevronDown
+                  className={`w-3.5 h-3.5 text-gray-500 transition-transform duration-150 ${
+                    isSignInDropdownOpen ? 'rotate-180' : ''
+                  }`}
+                />
+              </button>
+
+              {/* Sign In / Account Dropdown Menu */}
+              {isSignInDropdownOpen && (
+                <div
+                  role="menu"
+                  className="absolute right-0 top-full mt-2 w-64 bg-white rounded-2xl shadow-xl border border-gray-100 p-2 z-50 animate-in fade-in slide-in-from-top-1 duration-150"
+                >
+                  {/* Logged in Resident state */}
+                  {currentUser && currentRole === 'customer' && (
+                    <div className="p-2 border-b border-gray-100 mb-1">
+                      <div className="text-xs font-bold text-gray-900">{currentUser.name}</div>
+                      <div className="text-[11px] text-gray-500">{currentUser.phone}</div>
+                      <div className="text-[11px] text-[#0F3D2E] font-medium mt-0.5 truncate">
+                        {currentUser.locality}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* If user is logged in as Resident */}
+                  {currentUser && currentRole === 'customer' && (
+                    <>
+                      <button
+                        role="menuitem"
+                        onClick={() => {
+                          setCurrentPage('account');
+                          setIsSignInDropdownOpen(false);
+                        }}
+                        className="w-full text-left px-3 py-2 rounded-xl text-xs font-semibold text-gray-700 hover:bg-gray-50 flex items-center justify-between transition-colors"
+                      >
+                        <div className="flex items-center space-x-2">
+                          <User className="w-3.5 h-3.5 text-gray-500" />
+                          <span>My Account</span>
+                        </div>
+                        <ChevronRight className="w-3.5 h-3.5 text-gray-400" />
+                      </button>
+
+                      <button
+                        role="menuitem"
+                        onClick={() => {
+                          setCurrentPage('account');
+                          setIsSignInDropdownOpen(false);
+                        }}
+                        className="w-full text-left px-3 py-2 rounded-xl text-xs font-semibold text-gray-700 hover:bg-gray-50 flex items-center justify-between transition-colors"
+                      >
+                        <div className="flex items-center space-x-2">
+                          <PackageCheck className="w-3.5 h-3.5 text-gray-500" />
+                          <span>My Bookings ({requests.length})</span>
+                        </div>
+                        <ChevronRight className="w-3.5 h-3.5 text-gray-400" />
+                      </button>
+
+                      {activeCustomerOrder && (
+                        <button
+                          role="menuitem"
+                          onClick={() => {
+                            setActiveTrackingRequestId(activeCustomerOrder.id);
+                            setIsSignInDropdownOpen(false);
+                          }}
+                          className="w-full text-left px-3 py-2 rounded-xl text-xs font-semibold text-[#0F3D2E] hover:bg-emerald-50 flex items-center justify-between transition-colors"
+                        >
+                          <div className="flex items-center space-x-1.5">
+                            <span className="w-1.5 h-1.5 rounded-full bg-[#F28C28] animate-pulse" />
+                            <span>Track #{activeCustomerOrder.id}</span>
+                          </div>
+                          <ChevronRight className="w-3.5 h-3.5 text-gray-400" />
+                        </button>
+                      )}
+
+                      <div className="my-1 border-t border-gray-100" />
+
+                      <button
+                        role="menuitem"
+                        onClick={() => {
+                          logoutCustomer();
+                          setIsSignInDropdownOpen(false);
+                        }}
+                        className="w-full text-left px-3 py-2 rounded-xl text-xs font-semibold text-red-600 hover:bg-red-50 flex items-center justify-between transition-colors cursor-pointer"
+                      >
+                        <div className="flex items-center space-x-2">
+                          <LogOut className="w-3.5 h-3.5 text-red-500" />
+                          <span>Logout</span>
+                        </div>
+                      </button>
+                    </>
+                  )}
+
+                  {/* Staff Portals when a role is currently active */}
+                  {currentRole !== 'customer' && (
+                    <div className="p-2 border-b border-gray-100 mb-1">
+                      <div className="text-[11px] font-bold text-gray-400 uppercase tracking-wider">
+                        Active Workspace
+                      </div>
+                      <div className="text-xs font-bold text-[#0F3D2E] mt-0.5">
+                        {currentRole === 'employee'
+                          ? `Technician: ${currentEmployee?.name}`
+                          : currentRole === 'vendor'
+                          ? `Vendor: ${currentVendor?.businessName}`
+                          : 'Operations Lead: Harman'}
+                      </div>
+                      <button
+                        onClick={() => {
+                          logoutStaff();
+                          setIsSignInDropdownOpen(false);
+                        }}
+                        className="mt-2 text-xs text-red-600 hover:underline flex items-center space-x-1 font-semibold"
+                      >
+                        <LogOut className="w-3.5 h-3.5" />
+                        <span>Exit Staff Portal</span>
+                      </button>
+                    </div>
+                  )}
+
+                  {/* Resident Sign In Button (when not logged in) */}
+                  {!currentUser && currentRole === 'customer' && (
+                    <button
+                      role="menuitem"
+                      onClick={() => {
+                        setIsAuthModalOpen(true);
+                        setIsSignInDropdownOpen(false);
+                      }}
+                      className="w-full text-left px-3 py-2.5 rounded-xl text-xs font-bold bg-[#0F3D2E] text-white hover:bg-[#144d37] flex items-center justify-between transition-all"
+                    >
+                      <div className="flex items-center space-x-2">
+                        <User className="w-3.5 h-3.5" />
+                        <span>Resident Sign In</span>
+                      </div>
+                      <ArrowRight className="w-3.5 h-3.5" />
+                    </button>
+                  )}
+
+                  <div className="my-1.5 border-t border-gray-100" />
+
+                  {/* Staff & Partner Portal Links */}
+                  <div className="px-3 py-1">
+                    <div className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">
+                      Staff & Partner Portals
+                    </div>
+                  </div>
+
+                  <button
+                    role="menuitem"
+                    onClick={() => {
+                      if (currentRole === 'employee') {
+                        setCurrentPage('employee');
+                      } else {
+                        setIsAuthModalOpen(true);
+                      }
+                      setIsSignInDropdownOpen(false);
+                    }}
+                    className="w-full text-left px-3 py-2 rounded-xl text-xs font-medium text-gray-700 hover:bg-gray-50 flex items-center justify-between transition-colors"
+                  >
+                    <span>Technician Portal</span>
+                    <Wrench className="w-3.5 h-3.5 text-gray-400" />
+                  </button>
+
+                  <button
+                    role="menuitem"
+                    onClick={() => {
+                      if (currentRole === 'vendor') {
+                        setCurrentPage('vendor');
+                      } else {
+                        setIsAuthModalOpen(true);
+                      }
+                      setIsSignInDropdownOpen(false);
+                    }}
+                    className="w-full text-left px-3 py-2 rounded-xl text-xs font-medium text-gray-700 hover:bg-gray-50 flex items-center justify-between transition-colors"
+                  >
+                    <span>Vendor Partner Hub</span>
+                    <HardHat className="w-3.5 h-3.5 text-gray-400" />
+                  </button>
+
+                  <button
+                    role="menuitem"
+                    onClick={() => {
+                      if (currentRole === 'operations') {
+                        setCurrentPage('admin');
+                      } else {
+                        setIsAuthModalOpen(true);
+                      }
+                      setIsSignInDropdownOpen(false);
+                    }}
+                    className="w-full text-left px-3 py-2 rounded-xl text-xs font-medium text-gray-700 hover:bg-gray-50 flex items-center justify-between transition-colors"
+                  >
+                    <span>Operations Command Desk</span>
+                    <ShieldCheck className="w-3.5 h-3.5 text-gray-400" />
+                  </button>
+                </div>
+              )}
+            </div>
+
+            {/* Filled Primary CTA: "Book a Service" (Desktop) */}
             <button
-              onClick={() => setIsAuthModalOpen(true)}
-              className="flex items-center space-x-1.5 px-2.5 py-2 rounded-xl border border-[#c0c9c2]/60 hover:border-[#003523] hover:bg-[#f2f3ff] text-[#131b2e] transition-all text-xs font-semibold"
-              title={
-                currentRole === 'employee'
-                  ? `Technician Account: ${currentEmployee?.name}`
-                  : currentRole === 'vendor'
-                  ? `Vendor Account: ${currentVendor?.businessName}`
-                  : currentRole === 'operations'
-                  ? 'Operations Lead Account'
-                  : currentUser
-                  ? `Account: ${currentUser.name}`
-                  : 'Login / Register'
-              }
-              aria-label="User Account and Login"
+              onClick={handleBookService}
+              className="hidden sm:inline-flex items-center space-x-1.5 px-4 py-2.5 rounded-xl bg-[#F28C28] hover:bg-[#d9771e] text-white text-xs sm:text-sm font-bold shadow-xs hover:shadow-md active:scale-[0.98] transition-all focus-visible:ring-2 focus-visible:ring-[#0F3D2E] focus-visible:outline-none"
+              aria-label="Book a Service"
             >
-              <div className="w-6 h-6 rounded-lg bg-[#c0edd3] text-[#003523] flex items-center justify-center font-bold text-[11px]">
-                {currentRole === 'employee' ? (
-                  <Wrench className="w-3.5 h-3.5" />
-                ) : currentRole === 'vendor' ? (
-                  <HardHat className="w-3.5 h-3.5" />
-                ) : currentRole === 'operations' ? (
-                  <ShieldCheck className="w-3.5 h-3.5" />
-                ) : currentUser ? (
-                  currentUser.name.split(' ').map((n) => n[0]).slice(0, 2).join('')
-                ) : (
-                  <User className="w-3.5 h-3.5" />
-                )}
-              </div>
-              <span className="hidden lg:inline text-xs font-bold truncate max-w-[120px]">
-                {currentRole === 'employee'
-                  ? currentEmployee?.name.split(' ')[0] || 'Technician'
-                  : currentRole === 'vendor'
-                  ? currentVendor?.businessName.split(' ')[0] || 'Vendor'
-                  : currentRole === 'operations'
-                  ? 'Operations'
-                  : currentUser
-                  ? currentUser.name.split(' ')[0]
-                  : 'Sign In'}
-              </span>
+              <span>Book a Service</span>
+              <ArrowRight className="w-4 h-4" />
             </button>
 
-            {/* Mobile menu hamburger */}
+            {/* Mobile Hamburger Button */}
             <button
               onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
-              className="md:hidden p-2 rounded-lg text-[#131b2e] hover:bg-[#f2f3ff]"
+              className="lg:hidden p-2 rounded-xl text-[#0F3D2E] hover:bg-gray-100 transition-colors focus-visible:ring-2 focus-visible:ring-[#0F3D2E] focus-visible:outline-none"
+              aria-label={mobileMenuOpen ? 'Close navigation menu' : 'Open navigation menu'}
+              aria-expanded={mobileMenuOpen}
             >
               {mobileMenuOpen ? <X className="w-6 h-6" /> : <Menu className="w-6 h-6" />}
             </button>
           </div>
         </div>
 
-        {/* Mobile dropdown menu */}
+        {/* 3. Mobile Full-Screen Drawer Menu (Services Listed First) */}
         {mobileMenuOpen && (
-          <div className="md:hidden bg-white border-b border-[#c0c9c2]/40 px-4 pt-2 pb-4 space-y-2 shadow-lg">
-            <button
-              onClick={() => {
-                setIsLocalityModalOpen(true);
-                setMobileMenuOpen(false);
-              }}
-              className="w-full flex items-center justify-between p-2.5 rounded-lg bg-[#f2f3ff] text-xs font-semibold text-[#131b2e]"
-            >
-              <div className="flex items-center space-x-2">
-                <MapPin className="w-4 h-4 text-[#003523]" />
-                <span>Sector Hub: {currentLocality}</span>
-              </div>
-              <span className="text-[#003523] font-bold">Change</span>
-            </button>
-
-            {/* Mobile Account / Auth Button */}
-            <button
-              onClick={() => {
-                setIsAuthModalOpen(true);
-                setMobileMenuOpen(false);
-              }}
-              className="w-full flex items-center justify-between p-2.5 rounded-lg bg-[#faf8ff] border border-[#c0c9c2]/50 text-xs font-semibold text-[#131b2e] hover:bg-[#eaedff]"
-            >
-              <div className="flex items-center space-x-2">
-                <div className="w-6 h-6 rounded-md bg-[#003523] text-white flex items-center justify-center font-bold text-[10px]">
-                  {currentUser ? (
-                    currentUser.name.split(' ').map((n) => n[0]).slice(0, 2).join('')
-                  ) : (
-                    <User className="w-3.5 h-3.5" />
-                  )}
+          <div
+            className="fixed inset-0 z-50 bg-white flex flex-col overflow-y-auto animate-in slide-in-from-right duration-200"
+            role="dialog"
+            aria-modal="true"
+            aria-label="Mobile Navigation"
+          >
+            {/* Drawer Top Bar */}
+            <div className="h-16 border-b border-gray-100 px-4 flex items-center justify-between">
+              <div className="flex items-center space-x-2.5">
+                <div className="w-8 h-8 rounded-xl bg-[#0F3D2E] text-white flex items-center justify-center font-bold text-sm">
+                  U
                 </div>
-                <span>
-                  {currentUser ? `Resident: ${currentUser.name}` : 'Sign In / Register Customer'}
-                </span>
+                <div>
+                  <div className="text-sm font-bold text-[#0F3D2E] leading-none">
+                    UrbanCare Solution
+                  </div>
+                  <div className="text-[10px] text-gray-500 leading-tight">
+                    Your Space | Our Care
+                  </div>
+                </div>
               </div>
-              <span className="text-[#003523] font-bold">
-                {currentUser ? 'Profile' : 'Log In →'}
-              </span>
-            </button>
 
-            <div className="grid grid-cols-2 gap-2 pt-2 text-xs font-semibold">
               <button
-                onClick={() => {
-                  setCurrentPage('home');
-                  setMobileMenuOpen(false);
-                }}
-                className="p-2.5 rounded-lg bg-[#faf8ff] text-left hover:bg-[#eaedff]"
+                onClick={() => setMobileMenuOpen(false)}
+                className="p-2 rounded-xl text-gray-500 hover:text-gray-900 hover:bg-gray-100"
+                aria-label="Close menu"
               >
-                Home
-              </button>
-              <button
-                onClick={() => {
-                  setCurrentPage('services');
-                  setMobileMenuOpen(false);
-                }}
-                className="p-2.5 rounded-lg bg-[#faf8ff] text-left hover:bg-[#eaedff]"
-              >
-                All Services
-              </button>
-              <button
-                onClick={() => {
-                  setCurrentPage('projects');
-                  setMobileMenuOpen(false);
-                }}
-                className="p-2.5 rounded-lg bg-[#faf8ff] text-left hover:bg-[#eaedff]"
-              >
-                Home Projects
-              </button>
-              <button
-                onClick={() => {
-                  setCurrentPage('account');
-                  setMobileMenuOpen(false);
-                }}
-                className="p-2.5 rounded-lg bg-[#faf8ff] text-left hover:bg-[#eaedff]"
-              >
-                My Bookings ({requests.length})
-              </button>
-              <button
-                onClick={() => {
-                  setCurrentPage('how-it-works');
-                  setMobileMenuOpen(false);
-                }}
-                className="p-2.5 rounded-lg bg-[#faf8ff] text-left hover:bg-[#eaedff]"
-              >
-                How It Works
-              </button>
-              <button
-                onClick={() => {
-                  setCurrentPage('become-partner');
-                  setMobileMenuOpen(false);
-                }}
-                className="p-2.5 rounded-lg bg-[#faf8ff] text-left hover:bg-[#eaedff]"
-              >
-                Become a Partner
-              </button>
-              <button
-                onClick={() => {
-                  setCurrentPage('about');
-                  setMobileMenuOpen(false);
-                }}
-                className="p-2.5 rounded-lg bg-[#faf8ff] text-left hover:bg-[#eaedff]"
-              >
-                About UrbanCare Solution
-              </button>
-              <button
-                onClick={() => {
-                  setCurrentPage('contact');
-                  setMobileMenuOpen(false);
-                }}
-                className="p-2.5 rounded-lg bg-[#faf8ff] text-left hover:bg-[#eaedff]"
-              >
-                Contact & Office
+                <X className="w-6 h-6" />
               </button>
             </div>
 
-            {/* Role-specific Mobile Quick Access - Strict Role Isolation */}
-            <div className="pt-2 space-y-2">
-              {currentRole === 'employee' && (
+            <div className="flex-1 p-4 space-y-5 pb-24">
+              {/* Location Selector Bar */}
+              <button
+                onClick={() => {
+                  setIsLocalityModalOpen(true);
+                  setMobileMenuOpen(false);
+                }}
+                className="w-full flex items-center justify-between p-3 rounded-xl bg-gray-50 border border-gray-200/80 text-xs font-semibold text-[#0F3D2E]"
+              >
+                <div className="flex items-center space-x-2">
+                  <MapPin className="w-4 h-4 text-[#0F3D2E]" />
+                  <span>Serving: {shortSectorName} (JLPL & Mohali)</span>
+                </div>
+                <span className="text-[#F28C28] font-bold">Change ▾</span>
+              </button>
+
+              {/* SECTION 1: SERVICES LISTED FIRST */}
+              <div className="space-y-2.5">
+                <div className="flex items-center justify-between">
+                  <h3 className="text-xs font-bold text-gray-400 uppercase tracking-wider">
+                    Our Doorstep Services
+                  </h3>
+                  <button
+                    onClick={() => {
+                      setCurrentPage('services');
+                      setMobileMenuOpen(false);
+                    }}
+                    className="text-xs font-semibold text-[#0F3D2E] hover:underline"
+                  >
+                    View All 35+ →
+                  </button>
+                </div>
+
+                <div className="grid grid-cols-2 gap-2">
+                  {megaMenuCategories.map((cat) => {
+                    const Icon = cat.icon;
+                    return (
+                      <button
+                        key={cat.id}
+                        onClick={() => {
+                          setCurrentPage('services');
+                          setMobileMenuOpen(false);
+                        }}
+                        className="p-2.5 rounded-xl border border-gray-200/80 bg-white hover:bg-gray-50 text-left flex items-center space-x-2.5 transition-all shadow-2xs"
+                      >
+                        <div
+                          className={`w-7 h-7 rounded-lg flex items-center justify-center shrink-0 ${cat.accent}`}
+                        >
+                          <Icon className="w-3.5 h-3.5" />
+                        </div>
+                        <span className="text-xs font-bold text-gray-900 truncate">
+                          {cat.name}
+                        </span>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+
+              {/* SECTION 2: PRIMARY NAVIGATION PAGES */}
+              <div className="space-y-1.5 pt-2 border-t border-gray-100">
+                <div className="text-[10px] font-bold text-gray-400 uppercase tracking-wider px-1">
+                  Explore UrbanCare
+                </div>
                 <button
                   onClick={() => {
-                    setCurrentPage('employee');
+                    setCurrentPage('projects');
                     setMobileMenuOpen(false);
                   }}
-                  className="w-full flex items-center justify-center space-x-2 py-2.5 bg-[#003523] text-white rounded-lg text-xs font-bold shadow-xs border border-white/20"
+                  className="w-full p-2.5 rounded-xl bg-gray-50 hover:bg-gray-100 text-left font-semibold text-xs text-gray-900 flex items-center justify-between"
                 >
-                  <Wrench className="w-4 h-4 text-[#b6efd1]" />
-                  <span>Open My Technician Hub {pendingEmployeeJobsCount > 0 ? `(${pendingEmployeeJobsCount} Active)` : ''}</span>
+                  <div className="flex items-center space-x-2">
+                    <HardHat className="w-4 h-4 text-[#F28C28]" />
+                    <span>Home Projects (Kitchen & Renovation)</span>
+                  </div>
+                  <ChevronRight className="w-4 h-4 text-gray-400" />
                 </button>
-              )}
 
-              {currentRole === 'vendor' && (
                 <button
                   onClick={() => {
-                    setCurrentPage('vendor');
+                    setCurrentPage('how-it-works');
                     setMobileMenuOpen(false);
                   }}
-                  className="w-full flex items-center justify-center space-x-2 py-2.5 bg-[#fe932c] text-[#002114] rounded-lg text-xs font-bold shadow-xs"
+                  className="w-full p-2.5 rounded-xl bg-gray-50 hover:bg-gray-100 text-left font-semibold text-xs text-gray-900 flex items-center justify-between"
                 >
-                  <HardHat className="w-4 h-4 text-[#002114]" />
-                  <span>Open My Vendor Partner Hub {pendingVendorRequestsCount > 0 ? `(${pendingVendorRequestsCount} Pending)` : ''}</span>
+                  <span>How It Works & ₹0 Advance Policy</span>
+                  <ChevronRight className="w-4 h-4 text-gray-400" />
                 </button>
-              )}
 
-              {currentRole === 'operations' && (
                 <button
                   onClick={() => {
-                    setCurrentPage('admin');
+                    setCurrentPage('become-partner');
                     setMobileMenuOpen(false);
                   }}
-                  className="w-full flex items-center justify-center space-x-2 py-2.5 bg-[#003523] text-white rounded-lg text-xs font-bold"
+                  className="w-full p-2.5 rounded-xl bg-gray-50 hover:bg-gray-100 text-left font-semibold text-xs text-gray-900 flex items-center justify-between"
                 >
-                  <ShieldCheck className="w-4 h-4 text-[#fe932c]" />
-                  <span>Open Operations Command Portal</span>
+                  <span>Become a Partner / Artisan Join</span>
+                  <ChevronRight className="w-4 h-4 text-gray-400" />
                 </button>
-              )}
 
-              {currentRole === 'customer' && !currentUser && (
+                <button
+                  onClick={() => {
+                    setCurrentPage('about');
+                    setMobileMenuOpen(false);
+                  }}
+                  className="w-full p-2.5 rounded-xl bg-gray-50 hover:bg-gray-100 text-left font-semibold text-xs text-gray-900 flex items-center justify-between"
+                >
+                  <span>About UrbanCare Solution</span>
+                  <ChevronRight className="w-4 h-4 text-gray-400" />
+                </button>
+              </div>
+
+              {/* SECTION 3: ACCOUNT & ROLE MANAGEMENT */}
+              <div className="space-y-2 pt-2 border-t border-gray-100">
+                <div className="text-[10px] font-bold text-gray-400 uppercase tracking-wider px-1">
+                  Account Access
+                </div>
+
+                {currentUser ? (
+                  <div className="p-3 rounded-xl bg-emerald-50/70 border border-emerald-100 space-y-3">
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <div className="text-xs font-bold text-gray-900">
+                          Resident: {currentUser.name}
+                        </div>
+                        <div className="text-[11px] text-gray-500">{currentUser.phone}</div>
+                        <div className="text-[11px] text-[#0F3D2E] font-medium">{currentUser.locality}</div>
+                      </div>
+                      <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-[#c0edd3] text-[#003523]">
+                        {currentUser.status || 'ACTIVE'}
+                      </span>
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-2 pt-1 border-t border-emerald-100/60">
+                      <button
+                        onClick={() => {
+                          setCurrentPage('account');
+                          setMobileMenuOpen(false);
+                        }}
+                        className="py-1.5 px-2.5 rounded-lg bg-white border border-emerald-200 text-xs font-bold text-[#0F3D2E] flex items-center justify-center space-x-1 hover:bg-emerald-50 transition-colors cursor-pointer"
+                      >
+                        <User className="w-3.5 h-3.5 text-[#0F3D2E]" />
+                        <span>My Account</span>
+                      </button>
+
+                      <button
+                        onClick={() => {
+                          setCurrentPage('account');
+                          setMobileMenuOpen(false);
+                        }}
+                        className="py-1.5 px-2.5 rounded-lg bg-white border border-emerald-200 text-xs font-bold text-[#0F3D2E] flex items-center justify-center space-x-1 hover:bg-emerald-50 transition-colors cursor-pointer"
+                      >
+                        <PackageCheck className="w-3.5 h-3.5 text-[#0F3D2E]" />
+                        <span>My Bookings ({requests.length})</span>
+                      </button>
+                    </div>
+
+                    <button
+                      onClick={() => {
+                        logoutCustomer();
+                        setMobileMenuOpen(false);
+                      }}
+                      className="w-full py-2 px-3 rounded-lg bg-red-50 hover:bg-red-100 text-red-700 border border-red-200 text-xs font-bold flex items-center justify-center space-x-1.5 transition-colors cursor-pointer"
+                    >
+                      <LogOut className="w-3.5 h-3.5 text-red-600" />
+                      <span>Logout of Account</span>
+                    </button>
+                  </div>
+                ) : (
+                  <button
+                    onClick={() => {
+                      setIsAuthModalOpen(true);
+                      setMobileMenuOpen(false);
+                    }}
+                    className="w-full py-2.5 px-3 rounded-xl bg-[#0F3D2E] text-white text-xs font-bold flex items-center justify-center space-x-2"
+                  >
+                    <User className="w-4 h-4" />
+                    <span>Resident Sign In / Register</span>
+                  </button>
+                )}
+
+                {currentRole !== 'customer' && (
+                  <div className="p-3 rounded-xl bg-gray-50 border border-gray-200 space-y-2">
+                    <div className="text-[11px] font-bold text-gray-500 uppercase tracking-wider">
+                      Active Staff Session
+                    </div>
+                    <div className="text-xs font-bold text-[#0F3D2E]">
+                      {currentRole === 'employee'
+                        ? `Technician: ${currentEmployee?.name}`
+                        : currentRole === 'vendor'
+                        ? `Vendor: ${currentVendor?.businessName}`
+                        : 'Operations Lead: Harman'}
+                    </div>
+                    <button
+                      onClick={() => {
+                        logoutStaff();
+                        setMobileMenuOpen(false);
+                      }}
+                      className="w-full py-1.5 px-3 rounded-lg bg-red-50 hover:bg-red-100 text-red-700 border border-red-200 text-xs font-bold flex items-center justify-center space-x-1.5 transition-colors cursor-pointer"
+                    >
+                      <LogOut className="w-3.5 h-3.5 text-red-600" />
+                      <span>Exit Staff Workspace</span>
+                    </button>
+                  </div>
+                )}
+
                 <button
                   onClick={() => {
                     setIsAuthModalOpen(true);
                     setMobileMenuOpen(false);
                   }}
-                  className="w-full flex items-center justify-center space-x-2 py-2.5 bg-gray-100 hover:bg-gray-200 text-gray-800 rounded-lg text-xs font-bold"
+                  className="w-full py-2 px-3 rounded-xl border border-gray-200 text-gray-700 text-xs font-semibold hover:bg-gray-50"
                 >
-                  <User className="w-4 h-4" />
-                  <span>Sign In / Staff Portal Access</span>
+                  Staff & Partner Portals (Technician, Vendor, Ops)
                 </button>
-              )}
+              </div>
+
+              {/* Direct Support Contact Strip */}
+              <div className="pt-2 border-t border-gray-100 flex items-center justify-between text-xs text-gray-600">
+                <a
+                  href="tel:+918284018909"
+                  className="flex items-center space-x-1.5 font-semibold text-[#0F3D2E]"
+                >
+                  <Phone className="w-3.5 h-3.5" />
+                  <span>+91 8284018909</span>
+                </a>
+                <a
+                  href="https://wa.me/918284018909"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="flex items-center space-x-1.5 font-semibold text-emerald-700"
+                >
+                  <MessageCircle className="w-3.5 h-3.5" />
+                  <span>WhatsApp Chat</span>
+                </a>
+              </div>
             </div>
           </div>
         )}

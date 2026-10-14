@@ -45,7 +45,9 @@ export const checkSupabaseHealth = async (): Promise<{
   if (!isSupabaseConfigured()) {
     return {
       connected: false,
-      message: 'Supabase credentials not configured in .env file (Running in offline/local mock mode)'
+      message: import.meta.env.DEV
+        ? 'Supabase credentials not configured in .env file (Running in offline/local mock mode)'
+        : 'Service not configured: missing Supabase credentials.'
     };
   }
 

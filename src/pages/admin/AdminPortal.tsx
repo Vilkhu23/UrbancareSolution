@@ -10,6 +10,7 @@ import { RecordPaymentModal } from './RecordPaymentModal';
 import { ComplaintResolveModal } from './ComplaintResolveModal';
 import { EmployeeModal } from './EmployeeModal';
 import { DatabaseConfigModal } from './DatabaseConfigModal';
+import { CreateStaffModal } from './CreateStaffModal';
 import {
   Database,
   ShieldCheck,
@@ -60,8 +61,11 @@ import {
   UserCog,
   ShieldAlert,
   ArrowUpRight,
-  PieChart
+  PieChart,
+  LogOut,
+  PhoneOff
 } from 'lucide-react';
+import { adminReleasePhoneViaRpc } from '../../services/supabaseService';
 import {
   BookingStatus,
   ServiceItem,
@@ -117,13 +121,15 @@ export const AdminPortal: React.FC = () => {
     currentLocality,
     customers,
     updateCustomerStatus,
+    releaseCustomerPhone,
     complaints,
     payments,
     opsSettings,
     updateOpsSettings,
     dbStatus,
     refreshDbConnection,
-    showToast
+    showToast,
+    logoutStaff
   } = useApp();
 
   // Active top-level tab
@@ -142,7 +148,14 @@ export const AdminPortal: React.FC = () => {
   const [selectedDetailRequestId, setSelectedDetailRequestId] = useState<string | null>(null);
   const [isEmployeeModalOpen, setIsEmployeeModalOpen] = useState(false);
   const [editingEmployee, setEditingEmployee] = useState<Employee | null>(null);
+
+  // Admin Release Mobile Number Modal State
+  const [releasingCustomer, setReleasingCustomer] = useState<CustomerRecord | null>(null);
+  const [releaseReason, setReleaseReason] = useState<string>('');
+  const [isReleasingPhone, setIsReleasingPhone] = useState<boolean>(false);
+  const [releaseError, setReleaseError] = useState<string | null>(null);
   const [isDbModalOpen, setIsDbModalOpen] = useState(false);
+  const [isCreateStaffModalOpen, setIsCreateStaffModalOpen] = useState(false);
 
   // Assignment Board Modal state
   const [boardModalTarget, setBoardModalTarget] = useState<{
@@ -329,11 +342,19 @@ export const AdminPortal: React.FC = () => {
               onClick={() => {
                 setActiveAdminTab('assignment');
               }}
-              className="px-3.5 py-1.5 rounded-xl bg-[#003523] hover:bg-[#144d37] text-white text-xs font-bold shadow-xs flex items-center space-x-1.5"
+              className="px-3.5 py-1.5 rounded-xl bg-[#003523] hover:bg-[#144d37] text-white text-xs font-bold shadow-xs flex items-center space-x-1.5 cursor-pointer"
             >
               <UserCheck className="w-3.5 h-3.5 text-[#fe932c]" />
               <span className="hidden sm:inline">Manual Assignment Board</span>
               <span className="sm:hidden">Board</span>
+            </button>
+            <button
+              onClick={logoutStaff}
+              className="px-3 py-1.5 rounded-xl bg-red-50 hover:bg-red-100 text-red-700 border border-red-200 text-xs font-bold flex items-center space-x-1 transition-colors cursor-pointer"
+              title="Sign Out of Operations Command"
+            >
+              <LogOut className="w-3.5 h-3.5 text-red-600" />
+              <span>Logout</span>
             </button>
           </div>
         </div>
@@ -503,6 +524,16 @@ export const AdminPortal: React.FC = () => {
                 </button>
               );
             })}
+
+            <div className="pt-2 px-1 border-t border-[#c0c9c2]/30 mt-2">
+              <button
+                onClick={logoutStaff}
+                className="w-full flex items-center space-x-2.5 px-3 py-2 rounded-xl text-xs font-bold text-red-600 hover:bg-red-50 transition-colors cursor-pointer"
+              >
+                <LogOut className="w-4 h-4 text-red-500" />
+                <span>Exit Operations Command</span>
+              </button>
+            </div>
           </div>
 
           {/* Quick Hub Statistics Card */}
@@ -1297,15 +1328,32 @@ export const AdminPortal: React.FC = () => {
                           </span>
                         </td>
                         <td className="p-3 text-right">
-                          <button
-                            onClick={() => {
-                              setRequestSearch(c.name);
-                              setActiveAdminTab('requests');
-                            }}
-                            className="px-2.5 py-1.5 rounded-lg border border-[#c0c9c2] hover:bg-[#eaedff] font-bold text-xs"
-                          >
-                            View Bookings
-                          </button>
+                          <div className="flex items-center justify-end space-x-1.5">
+                            <button
+                              onClick={() => {
+                                setRequestSearch(c.name);
+                                setActiveAdminTab('requests');
+                              }}
+                              className="px-2.5 py-1.5 rounded-lg border border-[#c0c9c2] hover:bg-[#eaedff] font-bold text-xs cursor-pointer"
+                            >
+                              View Bookings
+                            </button>
+                            {c.phone && (
+                              <button
+                                onClick={() => {
+                                  setReleasingCustomer(c);
+                                  setReleaseReason('');
+                                  setReleaseError(null);
+                                }}
+                                className="px-2.5 py-1.5 rounded-lg border border-red-200 text-red-700 hover:bg-red-50 font-bold text-xs flex items-center space-x-1 cursor-pointer"
+                                title="Release Mobile Number (Admin only)"
+                              >
+                                <PhoneOff className="w-3 h-3 text-red-600" />
+                                <span className="hidden sm:inline">Release Mobile</span>
+                                <span className="sm:hidden">Release</span>
+                              </button>
+                            )}
+                          </div>
                         </td>
                       </tr>
                     ))}
@@ -1561,16 +1609,25 @@ export const AdminPortal: React.FC = () => {
                     Permanent company technicians equipped with standardized tool kits, assigned roles, and verified KYC across Sectors 94 to 111.
                   </p>
                 </div>
-                <button
-                  onClick={() => {
-                    setEditingEmployee(null);
-                    setIsEmployeeModalOpen(true);
-                  }}
-                  className="px-4 py-2.5 rounded-xl bg-[#003523] hover:bg-[#144d37] text-white text-xs font-bold shadow-xs transition-all flex items-center justify-center space-x-2 shrink-0 self-start sm:self-auto cursor-pointer"
-                >
-                  <Plus className="w-4 h-4 text-[#fe932c]" />
-                  <span>+ Add Employee & Assign Role</span>
-                </button>
+                <div className="flex items-center space-x-2 shrink-0 self-start sm:self-auto">
+                  <button
+                    onClick={() => setIsCreateStaffModalOpen(true)}
+                    className="px-4 py-2.5 rounded-xl bg-[#003523] hover:bg-[#144d37] text-white text-xs font-bold shadow-xs transition-all flex items-center justify-center space-x-2 cursor-pointer"
+                  >
+                    <UserPlus className="w-4 h-4 text-[#fe932c]" />
+                    <span>Provision Staff Account</span>
+                  </button>
+                  <button
+                    onClick={() => {
+                      setEditingEmployee(null);
+                      setIsEmployeeModalOpen(true);
+                    }}
+                    className="px-4 py-2.5 rounded-xl border border-[#003523] text-[#003523] hover:bg-[#003523]/5 text-xs font-bold transition-all flex items-center justify-center space-x-2 cursor-pointer"
+                  >
+                    <Plus className="w-4 h-4" />
+                    <span>Add Employee</span>
+                  </button>
+                </div>
               </div>
 
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
@@ -2561,6 +2618,105 @@ export const AdminPortal: React.FC = () => {
         isOpen={isDbModalOpen}
         onClose={() => setIsDbModalOpen(false)}
       />
+
+      {/* 10. Provision Staff User Account Modal */}
+      <CreateStaffModal
+        isOpen={isCreateStaffModalOpen}
+        onClose={() => setIsCreateStaffModalOpen(false)}
+      />
+
+      {/* 11. Release Mobile Number Modal (Admin Only, Audit Logged) */}
+      {releasingCustomer && (
+        <div className="fixed inset-0 z-50 bg-black/50 backdrop-blur-xs flex items-center justify-center p-4 animate-in fade-in duration-150">
+          <div className="bg-white rounded-3xl max-w-md w-full p-6 space-y-4 shadow-2xl border border-gray-100 animate-scaleUp">
+            <div className="flex items-center justify-between pb-3 border-b border-gray-100">
+              <div className="flex items-center space-x-2 text-rose-700">
+                <PhoneOff className="w-4 h-4 text-red-600" />
+                <h3 className="font-bold text-sm text-[#131b2e]">Release Registered Mobile Number</h3>
+              </div>
+              <button
+                onClick={() => setReleasingCustomer(null)}
+                className="p-1 rounded-lg text-gray-400 hover:text-gray-700 cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="p-3 bg-amber-50 border border-amber-200 rounded-xl text-xs text-amber-900 space-y-1">
+              <div className="font-bold flex items-center space-x-1.5 text-amber-800">
+                <AlertCircle className="w-3.5 h-3.5 shrink-0" />
+                <span>Administrative Action (Audit Logged)</span>
+              </div>
+              <p className="text-[11px] leading-relaxed text-amber-800">
+                This will dissociate <strong>{releasingCustomer.phone}</strong> from resident <strong>{releasingCustomer.name}</strong>, reset phone_verified to false, and allow this mobile number to be registered by another user.
+              </p>
+            </div>
+
+            {releaseError && (
+              <div className="p-3 bg-red-50 border border-red-200 rounded-xl text-xs text-red-700 flex items-start space-x-2">
+                <AlertCircle className="w-4 h-4 text-red-600 shrink-0 mt-0.5" />
+                <span className="leading-relaxed">{releaseError}</span>
+              </div>
+            )}
+
+            <form
+              onSubmit={async (e) => {
+                e.preventDefault();
+                if (!releaseReason.trim()) {
+                  setReleaseError('Please enter an administrative justification reason.');
+                  return;
+                }
+                setIsReleasingPhone(true);
+                setReleaseError(null);
+                const targetUid = releasingCustomer.user_id || releasingCustomer.id;
+                const result = await adminReleasePhoneViaRpc(targetUid, releaseReason.trim());
+                setIsReleasingPhone(false);
+                if (result.success) {
+                  showToast(`Mobile number released for ${releasingCustomer.name}.`, 'success');
+                  releaseCustomerPhone(targetUid);
+                  setReleasingCustomer(null);
+                } else {
+                  setReleaseError(result.message);
+                  showToast(result.message, 'error');
+                }
+              }}
+              className="space-y-3.5"
+            >
+              <div>
+                <label className="block text-xs font-bold text-gray-700 uppercase tracking-wider mb-1">
+                  Reason for Mobile Release *
+                </label>
+                <textarea
+                  required
+                  rows={3}
+                  value={releaseReason}
+                  onChange={(e) => setReleaseReason(e.target.value)}
+                  placeholder="e.g. Resident changed phone number, verified identity via physical ID, or SIM transferred..."
+                  className="w-full text-xs p-2.5 rounded-xl border border-gray-200 focus:outline-none focus:ring-2 focus:ring-[#003523] font-semibold resize-none"
+                />
+              </div>
+
+              <div className="pt-2 flex items-center justify-end space-x-2">
+                <button
+                  type="button"
+                  onClick={() => setReleasingCustomer(null)}
+                  className="px-4 py-2 rounded-xl border border-gray-200 text-xs font-semibold text-gray-700 hover:bg-gray-50 cursor-pointer"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={isReleasingPhone}
+                  className="px-4 py-2 rounded-xl bg-red-600 hover:bg-red-700 text-white text-xs font-bold transition-all shadow-xs flex items-center space-x-1.5 cursor-pointer disabled:opacity-50"
+                >
+                  <PhoneOff className="w-3.5 h-3.5" />
+                  <span>{isReleasingPhone ? 'Releasing...' : 'Confirm Release'}</span>
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

@@ -58,6 +58,7 @@ export const VendorPortal: React.FC = () => {
     setCurrentPage,
     currentVendorId,
     setCurrentVendorId,
+    authProfile,
     vendors,
     requests,
     opportunityLedger,
@@ -71,7 +72,9 @@ export const VendorPortal: React.FC = () => {
     vendorCompleteJob,
     loginStaff,
     logoutStaff,
-    showToast
+    showToast,
+    isLoadingData,
+    dataLoadError
   } = useApp();
 
   // Active sub-tab inside Vendor Portal
@@ -85,43 +88,51 @@ export const VendorPortal: React.FC = () => {
   const [previewPhotoUrl, setPreviewPhotoUrl] = useState<string | null>(null);
 
   // Authentication State for Role Protection Gate
-  const [selectedVendorForLogin, setSelectedVendorForLogin] = useState<string>(currentVendorId || 'vnd-1');
-  const [loginPassword, setLoginPassword] = useState<string>('MalwaPass@2026');
+  const [selectedVendorForLogin, setSelectedVendorForLogin] = useState<string>(currentVendorId || '');
+  const [loginPassword, setLoginPassword] = useState<string>('');
   const [showLoginPassword, setShowLoginPassword] = useState<boolean>(false);
 
-  // Current logged in vendor object
+  // Current logged in vendor object (matched by user_id or active ID)
   const currentVendor = useMemo(() => {
-    return vendors.find((v) => v.id === currentVendorId) || vendors[0];
-  }, [vendors, currentVendorId]);
+    return (
+      vendors.find((v) => (authProfile?.id && v.user_id === authProfile.id) || v.id === currentVendorId) ||
+      vendors[0] ||
+      null
+    );
+  }, [vendors, currentVendorId, authProfile]);
 
   // Filter requests relevant to this vendor
   // 1. Pending Acceptance: Assigned to this vendor, status is 'ASSIGNED'
   const pendingRequests = useMemo(() => {
+    if (!currentVendor) return [];
     return requests.filter(
       (r) => r.assignedTo?.id === currentVendor.id && r.status === 'ASSIGNED'
     );
-  }, [requests, currentVendor.id]);
+  }, [requests, currentVendor]);
 
   // 2. Active Jobs: Assigned to this vendor, status in ['ACCEPTED', 'SCHEDULED', 'IN PROGRESS']
   const activeJobs = useMemo(() => {
+    if (!currentVendor) return [];
     return requests.filter(
       (r) =>
         r.assignedTo?.id === currentVendor.id &&
         (r.status === 'ACCEPTED' || r.status === 'SCHEDULED' || r.status === 'IN PROGRESS')
     );
-  }, [requests, currentVendor.id]);
+  }, [requests, currentVendor]);
 
   // 3. Completed Jobs: Assigned to this vendor, status in ['COMPLETED', 'CUSTOMER CONFIRMED', 'CLOSED']
   const completedJobs = useMemo(() => {
+    if (!currentVendor) return [];
     return requests.filter(
       (r) =>
         r.assignedTo?.id === currentVendor.id &&
         (r.status === 'COMPLETED' || r.status === 'CUSTOMER CONFIRMED' || r.status === 'CLOSED')
     );
-  }, [requests, currentVendor.id]);
+  }, [requests, currentVendor]);
 
   // 4. New Opportunities in Cluster: Unassigned requests in trades matching vendor categories
   const newClusterOpportunities = useMemo(() => {
+    if (!currentVendor) return [];
     return requests.filter(
       (r) =>
         !r.assignedTo &&
@@ -139,8 +150,9 @@ export const VendorPortal: React.FC = () => {
 
   // Vendor's opportunity ledger entries
   const vendorLedgerEntries = useMemo(() => {
+    if (!currentVendor) return [];
     return opportunityLedger.filter((entry) => entry.vendorId === currentVendor.id);
-  }, [opportunityLedger, currentVendor.id]);
+  }, [opportunityLedger, currentVendor]);
 
   // Handle Login / Role Authentication with Mandatory Password
   const handleVendorLogin = (e: React.FormEvent) => {
@@ -198,12 +210,33 @@ export const VendorPortal: React.FC = () => {
 
           {/* Login Form */}
           <form onSubmit={handleVendorLogin} className="p-6 sm:p-8 space-y-5">
+            {dataLoadError && (
+              <div className="p-3 rounded-xl bg-red-50 border border-red-200 text-red-700 text-xs flex items-center space-x-2">
+                <AlertCircle className="w-4 h-4 shrink-0 text-red-600" />
+                <span>{dataLoadError}</span>
+              </div>
+            )}
+
             <div>
               <label className="block text-xs font-bold text-gray-700 uppercase tracking-wider mb-2">
                 Select Registered Partner Profile
               </label>
               <div className="space-y-2">
-                {vendors.map((v) => (
+                {isLoadingData && vendors.length === 0 ? (
+                  <div className="space-y-2">
+                    {[1, 2].map((i) => (
+                      <div key={i} className="p-4 rounded-xl border border-gray-200 animate-pulse space-y-2">
+                        <div className="h-4 bg-gray-200 rounded w-1/3"></div>
+                        <div className="h-3 bg-gray-200 rounded w-1/2"></div>
+                      </div>
+                    ))}
+                  </div>
+                ) : vendors.length === 0 ? (
+                  <div className="p-4 rounded-xl border border-dashed border-gray-200 text-center text-xs text-gray-500">
+                    No registered partner profiles available.
+                  </div>
+                ) : (
+                  vendors.map((v) => (
                   <label
                     key={v.id}
                     className={`flex items-center justify-between p-3 rounded-xl border text-xs cursor-pointer transition-all ${
@@ -219,7 +252,6 @@ export const VendorPortal: React.FC = () => {
                         checked={selectedVendorForLogin === v.id}
                         onChange={() => {
                           setSelectedVendorForLogin(v.id);
-                          setLoginPassword(v.password || 'MalwaPass@2026');
                         }}
                         className="text-[#003523] focus:ring-[#003523]"
                       />
@@ -247,7 +279,7 @@ export const VendorPortal: React.FC = () => {
                       {v.plan.remainingOpportunities} credits
                     </span>
                   </label>
-                ))}
+                )))}
               </div>
             </div>
 
@@ -268,9 +300,6 @@ export const VendorPortal: React.FC = () => {
                 <label className="block text-xs font-bold text-gray-700 uppercase tracking-wider">
                   Partner Account Password *
                 </label>
-                <span className="text-[10px] text-emerald-800 font-mono font-bold bg-emerald-50 px-2 py-0.5 rounded border border-emerald-200">
-                  Demo: {selectedVendorObj?.password || 'MalwaPass@2026'}
-                </span>
               </div>
               <div className="relative">
                 <Lock className="w-4 h-4 text-gray-400 absolute left-3 top-3.5" />
@@ -280,7 +309,7 @@ export const VendorPortal: React.FC = () => {
                   value={loginPassword}
                   onChange={(e) => setLoginPassword(e.target.value)}
                   className="w-full text-xs p-3 pl-9 pr-9 rounded-xl border border-gray-200 focus:outline-none focus:ring-2 focus:ring-[#003523] font-semibold"
-                  placeholder="Enter 8-letter password or 123456"
+                  placeholder="Enter vendor partner password"
                 />
                 <button
                   type="button"
@@ -314,6 +343,42 @@ export const VendorPortal: React.FC = () => {
               </button>
             </div>
           </form>
+        </div>
+      </div>
+    );
+  }
+
+  if (!currentVendor) {
+    if (isLoadingData) {
+      return (
+        <div className="min-h-[85vh] bg-[#f8faf9] py-12 px-4 flex items-center justify-center">
+          <div className="max-w-md w-full bg-white rounded-3xl p-8 border border-gray-200 text-center space-y-4 animate-pulse">
+            <div className="w-12 h-12 bg-gray-200 rounded-2xl mx-auto"></div>
+            <div className="h-4 bg-gray-200 rounded w-1/2 mx-auto"></div>
+            <div className="h-3 bg-gray-200 rounded w-3/4 mx-auto"></div>
+          </div>
+        </div>
+      );
+    }
+    return (
+      <div className="min-h-[85vh] bg-[#f8faf9] py-12 px-4 flex items-center justify-center">
+        <div className="max-w-md w-full bg-white rounded-3xl p-8 border border-gray-200 text-center space-y-4">
+          <div className="w-12 h-12 rounded-2xl bg-amber-100 text-amber-700 flex items-center justify-center mx-auto">
+            <AlertCircle className="w-6 h-6" />
+          </div>
+          <h3 className="text-lg font-bold text-gray-900">Vendor Record Not Found</h3>
+          <p className="text-xs text-gray-600">
+            No vendor profile is linked to your current authenticated account.
+          </p>
+          <button
+            onClick={() => {
+              logoutStaff();
+              setCurrentPage('home');
+            }}
+            className="px-4 py-2 bg-[#003523] text-white rounded-xl text-xs font-bold"
+          >
+            Return to Home
+          </button>
         </div>
       </div>
     );
@@ -365,7 +430,7 @@ export const VendorPortal: React.FC = () => {
           </div>
 
           {/* Authenticated Partner Badge & Logout - Strict Work Isolation */}
-          <div className="flex items-center space-x-3">
+          <div className="flex items-center flex-wrap gap-2">
             {/* Authenticated Profile Badge */}
             <div className="flex items-center space-x-2 bg-white/10 px-3 py-1.5 rounded-xl border border-white/15 text-xs">
               <span className="text-gray-300 text-[11px]">Logged in:</span>
@@ -1611,9 +1676,9 @@ export const VendorPortal: React.FC = () => {
         isOpen={!!selectedRequestForComplete}
         onClose={() => setSelectedRequestForComplete(null)}
         request={selectedRequestForComplete}
-        onConfirmComplete={(paymentMode, notes, photos) => {
+        onConfirmComplete={(paymentMode, notes, photos, customerOtp) => {
           if (selectedRequestForComplete) {
-            vendorCompleteJob(selectedRequestForComplete.id, paymentMode, notes, photos);
+            vendorCompleteJob(selectedRequestForComplete.id, paymentMode, notes, photos, customerOtp);
           }
         }}
       />

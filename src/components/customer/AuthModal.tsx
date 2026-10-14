@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { useApp } from '../../context/AppContext';
 import { LOCALITIES } from '../../data/initialData';
+import { supabase } from '../../lib/supabase';
 import {
   X,
   User,
@@ -20,9 +21,11 @@ import {
   Eye,
   EyeOff,
   Check,
-  KeyRound
+  KeyRound,
+  AlertCircle
 } from 'lucide-react';
-import { validateStrongPassword } from '../../utils/authValidation';
+import { validatePassword, validateIndianPhone, validateEmail } from '../../utils/authValidation';
+import { checkPhoneAvailableViaRpc } from '../../services/supabaseService';
 
 export const AuthModal: React.FC = () => {
   const {
@@ -40,10 +43,7 @@ export const AuthModal: React.FC = () => {
     loginStaff,
     logoutStaff,
     currentLocality,
-    setCurrentLocality,
     setCurrentPage,
-    setCurrentRole,
-    customers,
     showToast,
     setIsDPDPNoticeOpen,
     updateDPDPConsent
@@ -55,33 +55,16 @@ export const AuthModal: React.FC = () => {
   const [mode, setMode] = useState<'login' | 'register' | 'staff'>('login');
   
   // Login form state
-  const [loginInput, setLoginInput] = useState('');
-  const [loginMethod, setLoginMethod] = useState<'password' | 'otp'>('password');
+  const [loginEmail, setLoginEmail] = useState('');
   const [loginPassword, setLoginPassword] = useState('');
   const [showLoginPassword, setShowLoginPassword] = useState(false);
-  const [loginOtp, setLoginOtp] = useState('');
-  const [otpSent, setOtpSent] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
+  const [isResetSending, setIsResetSending] = useState(false);
 
   // Staff login state
-  const [staffRole, setStaffRole] = useState<'employee' | 'vendor' | 'operations'>('employee');
-  const [selectedStaffEntityId, setSelectedStaffEntityId] = useState('emp-1');
-  const [staffPassword, setStaffPassword] = useState('TechPass@101');
+  const [staffEmail, setStaffEmail] = useState('');
+  const [staffPassword, setStaffPassword] = useState('');
   const [showStaffPassword, setShowStaffPassword] = useState(false);
-
-  const handleStaffRoleChange = (role: 'employee' | 'vendor' | 'operations') => {
-    setStaffRole(role);
-    if (role === 'employee') {
-      setSelectedStaffEntityId(employees[0]?.id || 'emp-1');
-      setStaffPassword(employees[0]?.password || 'TechPass@101');
-    } else if (role === 'vendor') {
-      setSelectedStaffEntityId(vendors[0]?.id || 'vnd-1');
-      setStaffPassword(vendors[0]?.password || 'MalwaPass@2026');
-    } else {
-      setSelectedStaffEntityId('ops-lead');
-      setStaffPassword('OpsLead@2026');
-    }
-  };
 
   // Registration form state
   const [regName, setRegName] = useState('');
@@ -96,85 +79,96 @@ export const AuthModal: React.FC = () => {
   const [regConsentChecked, setRegConsentChecked] = useState(false);
   const [regConsentError, setRegConsentError] = useState(false);
 
-  const regPasswordValidation = validateStrongPassword(regPassword);
+  const regPasswordValidation = validatePassword(regPassword);
+  const regPhoneValidation = validateIndianPhone(regPhone);
 
   if (!isAuthModalOpen) return null;
 
   const isRoleLoggedIn =
     (currentRole === 'customer' && !!currentUser) ||
     currentRole === 'employee' ||
+    currentRole === 'technician' ||
     currentRole === 'vendor' ||
-    currentRole === 'operations';
+    currentRole === 'operations' ||
+    currentRole === 'admin';
 
-  const handleSendOtp = (e: React.FormEvent) => {
+  const handleLoginSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!loginInput.trim()) {
-      showToast('Please enter your mobile number or email', 'error');
+    if (!loginEmail.trim() || !loginPassword.trim()) {
+      showToast('Please enter both email and password', 'error');
       return;
     }
+
     setIsLoading(true);
-    setTimeout(() => {
-      setIsLoading(false);
-      setOtpSent(true);
-      showToast(`Verification code sent to ${loginInput}`, 'info');
-    }, 400);
+    const success = await loginCustomer(loginEmail.trim(), loginPassword.trim());
+    setIsLoading(false);
+    if (success) {
+      setIsAuthModalOpen(false);
+      setLoginEmail('');
+      setLoginPassword('');
+    }
   };
 
-  const handleLoginSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!loginInput.trim()) {
-      showToast('Please enter mobile number or email', 'error');
+  const handleForgotPassword = async () => {
+    if (!loginEmail.trim() || !validateEmail(loginEmail.trim())) {
+      showToast('Please enter your valid account email address above first.', 'error');
       return;
     }
 
-    const credential = loginMethod === 'password' ? loginPassword : (loginOtp || '123456');
-    if (loginMethod === 'password' && !loginPassword.trim()) {
-      showToast('Please enter your 8-letter account password', 'error');
-      return;
-    }
+    setIsResetSending(true);
+    try {
+      const { error } = await supabase.auth.resetPasswordForEmail(loginEmail.trim(), {
+        redirectTo: `${window.location.origin}/?reset=true`
+      });
 
-    setIsLoading(true);
-    setTimeout(() => {
-      setIsLoading(false);
-      const success = loginCustomer(loginInput, credential);
-      if (success) {
-        setIsAuthModalOpen(false);
-        setOtpSent(false);
-        setLoginInput('');
-        setLoginOtp('');
-        setLoginPassword('');
+      if (error) {
+        showToast(error.message, 'error');
+      } else {
+        showToast(`Password recovery link sent to ${loginEmail.trim()}! Check your inbox.`, 'success');
       }
-    }, 300);
+    } catch {
+      showToast('Failed to send recovery email. Please try again.', 'error');
+    } finally {
+      setIsResetSending(false);
+    }
   };
 
-  const handleStaffLoginSubmit = (e: React.FormEvent) => {
+  const handleStaffLoginSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!staffPassword.trim()) {
-      showToast('Please enter your account password to sign in', 'error');
+    if (!staffEmail.trim() || !staffPassword.trim()) {
+      showToast('Please enter staff email and password', 'error');
       return;
     }
 
     setIsLoading(true);
-    setTimeout(() => {
-      setIsLoading(false);
-      const targetEntityId = staffRole === 'operations' ? 'ops-lead' : selectedStaffEntityId;
-      const success = loginStaff(staffRole, targetEntityId, staffPassword);
-      if (success) {
-        setIsAuthModalOpen(false);
-        setStaffPassword('');
-      }
-    }, 300);
+    const success = await loginStaff(staffEmail.trim(), staffPassword.trim());
+    setIsLoading(false);
+    if (success) {
+      setIsAuthModalOpen(false);
+      setStaffEmail('');
+      setStaffPassword('');
+    }
   };
 
-  const handleRegisterSubmit = (e: React.FormEvent) => {
+  const handleRegisterSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!regName.trim() || !regPhone.trim()) {
-      showToast('Name and mobile number are required', 'error');
+      showToast('Full name and mobile number are required', 'error');
       return;
     }
 
-    if (!regPassword || regPassword.length < 8) {
-      showToast('Password must be at least 8 characters strong', 'error');
+    if (!regPhoneValidation.isValid) {
+      showToast(regPhoneValidation.message || 'Please enter a valid 10-digit mobile number (+91).', 'error');
+      return;
+    }
+
+    if (!regEmail.trim() || !validateEmail(regEmail.trim())) {
+      showToast('Please enter a valid email address.', 'error');
+      return;
+    }
+
+    if (!regPasswordValidation.isValid) {
+      showToast(regPasswordValidation.message || 'Password must be at least 8 characters long.', 'error');
       return;
     }
 
@@ -190,17 +184,34 @@ export const AuthModal: React.FC = () => {
     }
 
     setIsLoading(true);
-    setTimeout(() => {
-      setIsLoading(false);
-      registerCustomer({
-        name: regName,
-        phone: regPhone,
-        email: regEmail,
-        locality: regLocality,
-        address: regAddress,
-        password: regPassword
-      });
-      // Store one-time DPDP consent
+
+    // Pre-check phone availability via check_phone_available RPC
+    try {
+      const isAvailable = await checkPhoneAvailableViaRpc(regPhoneValidation.formatted);
+      if (!isAvailable) {
+        showToast('This mobile number is already registered. Please log in, or contact support if this is not you.', 'error');
+        setIsLoading(false);
+        return;
+      }
+    } catch (err: unknown) {
+      if (err instanceof Error && err.message.includes('Too many')) {
+        showToast(err.message, 'error');
+        setIsLoading(false);
+        return;
+      }
+    }
+
+    const created = await registerCustomer({
+      name: regName.trim(),
+      phone: regPhoneValidation.formatted,
+      email: regEmail.trim(),
+      locality: regLocality,
+      address: regAddress,
+      password: regPassword
+    });
+    setIsLoading(false);
+
+    if (created) {
       updateDPDPConsent({
         essentialService: true,
         dispatchUpdates: true,
@@ -217,13 +228,6 @@ export const AuthModal: React.FC = () => {
       setRegConfirmPassword('');
       setRegConsentChecked(false);
       setRegConsentError(false);
-    }, 300);
-  };
-
-  const handleQuickDemoSelect = (customer: typeof customers[0]) => {
-    const success = loginCustomer(customer.phone, customer.password || '123456');
-    if (success) {
-      setIsAuthModalOpen(false);
     }
   };
 
@@ -235,11 +239,11 @@ export const AuthModal: React.FC = () => {
         <div className="px-5 py-4 bg-[#003523] text-white flex items-center justify-between">
           <div className="flex items-center space-x-2.5">
             <div className="w-8 h-8 rounded-lg bg-[#b6efd1] text-[#003523] flex items-center justify-center font-bold">
-              {currentRole === 'employee' ? (
+              {currentRole === 'employee' || currentRole === 'technician' ? (
                 <Wrench className="w-4 h-4" />
               ) : currentRole === 'vendor' ? (
                 <HardHat className="w-4 h-4" />
-              ) : currentRole === 'operations' ? (
+              ) : currentRole === 'operations' || currentRole === 'admin' ? (
                 <ShieldCheck className="w-4 h-4" />
               ) : (
                 <User className="w-4 h-4" />
@@ -247,16 +251,16 @@ export const AuthModal: React.FC = () => {
             </div>
             <div>
               <h2 className="text-sm font-bold tracking-tight">
-                {currentRole === 'employee'
+                {currentRole === 'employee' || currentRole === 'technician'
                   ? 'Field Technician Account'
                   : currentRole === 'vendor'
                   ? 'Vendor Partner Account'
-                  : currentRole === 'operations'
+                  : currentRole === 'operations' || currentRole === 'admin'
                   ? 'Operations Command Lead'
                   : currentUser
                   ? 'Resident Account'
                   : mode === 'staff'
-                  ? 'Staff & Partner Hub Sign In'
+                  ? 'Staff & Partner Sign In'
                   : mode === 'login'
                   ? 'Resident Sign In'
                   : 'Create Resident Account'}
@@ -268,7 +272,7 @@ export const AuthModal: React.FC = () => {
           </div>
           <button
             onClick={() => setIsAuthModalOpen(false)}
-            className="p-1.5 rounded-lg text-white/80 hover:text-white hover:bg-white/10 transition-colors"
+            className="p-1.5 rounded-lg text-white/80 hover:text-white hover:bg-white/10 transition-colors cursor-pointer"
             aria-label="Close dialog"
           >
             <X className="w-5 h-5" />
@@ -278,12 +282,12 @@ export const AuthModal: React.FC = () => {
         {/* Modal Body */}
         <div className="p-5 overflow-y-auto space-y-4">
 
-          {/* IF LOGGED IN IN ANY ROLE: SHOW DEDICATED PROFILE CARD & ROLE-LOCKED ACTIONS */}
+          {/* IF LOGGED IN IN ANY ROLE: SHOW DEDICATED PROFILE CARD */}
           {isRoleLoggedIn ? (
             <div className="space-y-4">
 
               {/* 1. EMPLOYEE (TECHNICIAN) PROFILE */}
-              {currentRole === 'employee' && (
+              {(currentRole === 'employee' || currentRole === 'technician') && (
                 <div className="p-4 rounded-xl bg-[#faf8ff] border border-[#c0c9c2]/60 space-y-3">
                   <div className="flex items-center space-x-3">
                     <div className="w-12 h-12 rounded-xl bg-[#003523] text-white flex items-center justify-center font-bold text-base shadow-xs">
@@ -296,7 +300,7 @@ export const AuthModal: React.FC = () => {
                           {currentEmployee?.employeeCode || 'EMP-101'}
                         </span>
                       </div>
-                      <p className="text-xs text-[#707973] font-semibold">{currentEmployee?.role || 'Senior Master Technician'}</p>
+                      <p className="text-xs text-[#707973] font-semibold">{currentEmployee?.role || 'Staff Technician'}</p>
                       <p className="text-[11px] text-[#707973]">{currentEmployee?.mobile || '+91 98882 10452'}</p>
                     </div>
                   </div>
@@ -304,7 +308,7 @@ export const AuthModal: React.FC = () => {
                   <div className="pt-2 border-t border-[#c0c9c2]/40 text-xs space-y-1 text-[#404943]">
                     <div className="flex items-center space-x-1.5 text-xs text-[#707973]">
                       <Briefcase className="w-3.5 h-3.5 text-[#003523] shrink-0" />
-                      <span>Specialization: {currentEmployee?.skills?.slice(0, 2).join(', ') || 'AC & Electricals'}</span>
+                      <span>Specialization: {currentEmployee?.skills?.slice(0, 2).join(', ') || 'Home Repairs'}</span>
                     </div>
                     <div className="flex items-center space-x-1.5 text-xs text-[#707973]">
                       <ShieldCheck className="w-3.5 h-3.5 text-[#003523] shrink-0" />
@@ -318,17 +322,17 @@ export const AuthModal: React.FC = () => {
                         setCurrentPage('employee');
                         setIsAuthModalOpen(false);
                       }}
-                      className="w-full py-2.5 px-4 rounded-xl bg-[#003523] hover:bg-[#144d37] text-white font-bold text-xs flex items-center justify-center space-x-2 transition-all shadow-xs"
+                      className="w-full py-2.5 px-4 rounded-xl bg-[#003523] hover:bg-[#144d37] text-white font-bold text-xs flex items-center justify-center space-x-2 transition-all shadow-xs cursor-pointer"
                     >
                       <Wrench className="w-4 h-4 text-[#b6efd1]" />
                       <span>Open Technician Job Queue</span>
                     </button>
                     <button
-                      onClick={() => {
-                        logoutStaff();
+                      onClick={async () => {
+                        await logoutStaff();
                         setIsAuthModalOpen(false);
                       }}
-                      className="w-full py-2 px-4 rounded-xl border border-red-200 text-red-700 hover:bg-red-50 font-bold text-xs flex items-center justify-center space-x-2 transition-all"
+                      className="w-full py-2 px-4 rounded-xl border border-red-200 text-red-700 hover:bg-red-50 font-bold text-xs flex items-center justify-center space-x-2 transition-all cursor-pointer"
                     >
                       <LogOut className="w-4 h-4" />
                       <span>Sign Out of Technician Hub</span>
@@ -351,7 +355,7 @@ export const AuthModal: React.FC = () => {
                           {currentVendor?.status || 'ACTIVE'}
                         </span>
                       </div>
-                      <p className="text-xs text-[#707973]">Lead: {currentVendor?.ownerName || 'Kulwinder Singh'}</p>
+                      <p className="text-xs text-[#707973]">Lead: {currentVendor?.ownerName || 'Partner'}</p>
                       <p className="text-[11px] text-[#707973]">{currentVendor?.mobile || '+91 94172 88412'}</p>
                     </div>
                   </div>
@@ -359,7 +363,7 @@ export const AuthModal: React.FC = () => {
                   <div className="pt-2 border-t border-[#c0c9c2]/40 text-xs space-y-1 text-[#404943]">
                     <div className="flex items-center space-x-1.5 text-xs text-[#707973]">
                       <Briefcase className="w-3.5 h-3.5 text-[#003523] shrink-0" />
-                      <span>Active Plan: {currentVendor?.plan?.name || 'Standard Plan'} ({currentVendor?.plan?.remainingOpportunities || 4} Dispatches left)</span>
+                      <span>Active Plan: {currentVendor?.plan?.name || 'Standard Plan'} ({currentVendor?.plan?.remainingOpportunities || 0} Dispatches left)</span>
                     </div>
                   </div>
 
@@ -369,17 +373,17 @@ export const AuthModal: React.FC = () => {
                         setCurrentPage('vendor');
                         setIsAuthModalOpen(false);
                       }}
-                      className="w-full py-2.5 px-4 rounded-xl bg-[#003523] hover:bg-[#144d37] text-white font-bold text-xs flex items-center justify-center space-x-2 transition-all shadow-xs"
+                      className="w-full py-2.5 px-4 rounded-xl bg-[#003523] hover:bg-[#144d37] text-white font-bold text-xs flex items-center justify-center space-x-2 transition-all shadow-xs cursor-pointer"
                     >
                       <HardHat className="w-4 h-4 text-[#fe932c]" />
                       <span>Open Vendor Dispatches & Ledger</span>
                     </button>
                     <button
-                      onClick={() => {
-                        logoutStaff();
+                      onClick={async () => {
+                        await logoutStaff();
                         setIsAuthModalOpen(false);
                       }}
-                      className="w-full py-2 px-4 rounded-xl border border-red-200 text-red-700 hover:bg-red-50 font-bold text-xs flex items-center justify-center space-x-2 transition-all"
+                      className="w-full py-2 px-4 rounded-xl border border-red-200 text-red-700 hover:bg-red-50 font-bold text-xs flex items-center justify-center space-x-2 transition-all cursor-pointer"
                     >
                       <LogOut className="w-4 h-4" />
                       <span>Sign Out of Vendor Hub</span>
@@ -389,7 +393,7 @@ export const AuthModal: React.FC = () => {
               )}
 
               {/* 3. OPERATIONS SUPERVISOR PROFILE */}
-              {currentRole === 'operations' && (
+              {(currentRole === 'operations' || currentRole === 'admin') && (
                 <div className="p-4 rounded-xl bg-[#faf8ff] border border-[#c0c9c2]/60 space-y-3">
                   <div className="flex items-center space-x-3">
                     <div className="w-12 h-12 rounded-xl bg-[#003523] text-white flex items-center justify-center font-bold text-base shadow-xs">
@@ -397,7 +401,7 @@ export const AuthModal: React.FC = () => {
                     </div>
                     <div>
                       <div className="font-bold text-sm text-[#131b2e] flex items-center space-x-1.5">
-                        <span>Harman (Operations Lead)</span>
+                        <span>Operations Command</span>
                         <span className="text-[10px] font-bold px-1.5 py-0.2 rounded bg-[#c0edd3] text-[#003523]">
                           OPS-SUPERVISOR
                         </span>
@@ -413,17 +417,17 @@ export const AuthModal: React.FC = () => {
                         setCurrentPage('admin');
                         setIsAuthModalOpen(false);
                       }}
-                      className="w-full py-2.5 px-4 rounded-xl bg-[#003523] hover:bg-[#144d37] text-white font-bold text-xs flex items-center justify-center space-x-2 transition-all shadow-xs"
+                      className="w-full py-2.5 px-4 rounded-xl bg-[#003523] hover:bg-[#144d37] text-white font-bold text-xs flex items-center justify-center space-x-2 transition-all shadow-xs cursor-pointer"
                     >
                       <ShieldCheck className="w-4 h-4 text-[#fe932c]" />
                       <span>Open Operations Control Board</span>
                     </button>
                     <button
-                      onClick={() => {
-                        logoutStaff();
+                      onClick={async () => {
+                        await logoutStaff();
                         setIsAuthModalOpen(false);
                       }}
-                      className="w-full py-2 px-4 rounded-xl border border-red-200 text-red-700 hover:bg-red-50 font-bold text-xs flex items-center justify-center space-x-2 transition-all"
+                      className="w-full py-2 px-4 rounded-xl border border-red-200 text-red-700 hover:bg-red-50 font-bold text-xs flex items-center justify-center space-x-2 transition-all cursor-pointer"
                     >
                       <LogOut className="w-4 h-4" />
                       <span>Sign Out of Operations Command</span>
@@ -434,7 +438,7 @@ export const AuthModal: React.FC = () => {
 
               {/* 4. CUSTOMER / RESIDENT PROFILE */}
               {currentRole === 'customer' && currentUser && (
-                <>
+                <div className="space-y-4">
                   <div className="p-4 rounded-xl bg-[#faf8ff] border border-[#c0c9c2]/60 space-y-3">
                     <div className="flex items-center justify-between">
                       <div className="flex items-center space-x-3">
@@ -472,59 +476,26 @@ export const AuthModal: React.FC = () => {
                   <div className="space-y-2">
                     <button
                       onClick={() => {
-                        setCurrentRole('customer');
                         setCurrentPage('account');
                         setIsAuthModalOpen(false);
                       }}
-                      className="w-full py-2.5 px-4 rounded-xl bg-[#003523] hover:bg-[#144d37] text-white font-bold text-xs flex items-center justify-center space-x-2 transition-all shadow-xs"
+                      className="w-full py-2.5 px-4 rounded-xl bg-[#003523] hover:bg-[#144d37] text-white font-bold text-xs flex items-center justify-center space-x-2 transition-all shadow-xs cursor-pointer"
                     >
                       <User className="w-4 h-4" />
                       <span>Go to My Bookings & Dashboard</span>
                     </button>
 
                     <button
-                      onClick={() => {
-                        logoutCustomer();
+                      onClick={async () => {
+                        await logoutCustomer();
                       }}
-                      className="w-full py-2.5 px-4 rounded-xl border border-red-200 text-red-700 hover:bg-red-50 font-bold text-xs flex items-center justify-center space-x-2 transition-all"
+                      className="w-full py-2.5 px-4 rounded-xl border border-red-200 text-red-700 hover:bg-red-50 font-bold text-xs flex items-center justify-center space-x-2 transition-all cursor-pointer"
                     >
                       <LogOut className="w-4 h-4" />
                       <span>Sign Out of Account</span>
                     </button>
                   </div>
-
-                  {/* Switch Resident Profile Quick Bar (Strictly Resident to Resident only) */}
-                  <div className="pt-2 border-t border-[#c0c9c2]/40">
-                    <p className="text-[11px] font-bold text-[#707973] mb-2 uppercase tracking-wider">
-                      Or Switch Resident Profile:
-                    </p>
-                    <div className="space-y-1.5">
-                      {customers.slice(0, 3).map((cust) => (
-                        <button
-                          key={cust.id}
-                          onClick={() => handleQuickDemoSelect(cust)}
-                          className={`w-full p-2 rounded-lg text-left text-xs flex items-center justify-between border transition-all ${
-                            cust.id === currentUser.id
-                              ? 'bg-[#c0edd3]/40 border-[#003523] font-bold text-[#003523]'
-                              : 'bg-white border-[#c0c9c2]/50 hover:bg-[#f2f3ff] text-[#131b2e]'
-                          }`}
-                        >
-                          <div className="truncate">
-                            <span className="font-semibold">{cust.name}</span>
-                            <span className="text-[11px] text-[#707973] ml-2 font-normal">
-                              {cust.phone} · {cust.locality.split(',')[0]}
-                            </span>
-                          </div>
-                          {cust.id === currentUser.id ? (
-                            <CheckCircle2 className="w-3.5 h-3.5 text-[#003523] shrink-0" />
-                          ) : (
-                            <span className="text-[10px] text-[#707973]">Select</span>
-                          )}
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-                </>
+                </div>
               )}
             </div>
           ) : (
@@ -534,11 +505,8 @@ export const AuthModal: React.FC = () => {
               <div className="flex rounded-xl bg-[#f2f3ff] p-1 border border-[#c0c9c2]/40">
                 <button
                   type="button"
-                  onClick={() => {
-                    setMode('login');
-                    setOtpSent(false);
-                  }}
-                  className={`flex-1 py-1.5 rounded-lg text-xs font-bold transition-all ${
+                  onClick={() => setMode('login')}
+                  className={`flex-1 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
                     mode === 'login'
                       ? 'bg-white text-[#003523] shadow-xs'
                       : 'text-[#707973] hover:text-[#131b2e]'
@@ -549,7 +517,7 @@ export const AuthModal: React.FC = () => {
                 <button
                   type="button"
                   onClick={() => setMode('register')}
-                  className={`flex-1 py-1.5 rounded-lg text-xs font-bold transition-all ${
+                  className={`flex-1 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
                     mode === 'register'
                       ? 'bg-white text-[#003523] shadow-xs'
                       : 'text-[#707973] hover:text-[#131b2e]'
@@ -560,7 +528,7 @@ export const AuthModal: React.FC = () => {
                 <button
                   type="button"
                   onClick={() => setMode('staff')}
-                  className={`flex-1 py-1.5 rounded-lg text-xs font-bold transition-all ${
+                  className={`flex-1 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
                     mode === 'staff'
                       ? 'bg-white text-[#003523] shadow-xs'
                       : 'text-[#707973] hover:text-[#131b2e]'
@@ -570,219 +538,91 @@ export const AuthModal: React.FC = () => {
                 </button>
               </div>
 
-              {/* LOGIN TAB */}
+              {/* 1. RESIDENT LOGIN TAB */}
               {mode === 'login' && (
                 <form onSubmit={handleLoginSubmit} className="space-y-3.5 pt-1">
-                  {/* Login Method Toggle */}
-                  <div className="flex rounded-lg bg-[#faf8ff] p-0.5 border border-[#c0c9c2]/50 text-[11px]">
-                    <button
-                      type="button"
-                      onClick={() => setLoginMethod('password')}
-                      className={`flex-1 py-1 rounded-md font-bold transition-all ${
-                        loginMethod === 'password'
-                          ? 'bg-[#003523] text-white shadow-xs'
-                          : 'text-[#707973] hover:text-[#131b2e]'
-                      }`}
-                    >
-                      Password Sign In
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setLoginMethod('otp')}
-                      className={`flex-1 py-1 rounded-md font-bold transition-all ${
-                        loginMethod === 'otp'
-                          ? 'bg-[#003523] text-white shadow-xs'
-                          : 'text-[#707973] hover:text-[#131b2e]'
-                      }`}
-                    >
-                      Instant OTP Code
-                    </button>
-                  </div>
-
                   <div>
                     <label className="block text-xs font-bold text-[#131b2e] mb-1">
-                      Mobile Number or Email
+                      Email Address *
                     </label>
                     <div className="relative">
-                      <Phone className="w-4 h-4 text-[#707973] absolute left-3 top-2.5" />
+                      <Mail className="w-4 h-4 text-[#707973] absolute left-3 top-2.5" />
                       <input
-                        type="text"
+                        type="email"
                         required
-                        value={loginInput}
-                        onChange={(e) => setLoginInput(e.target.value)}
-                        placeholder="e.g. 98721 99120 or email"
+                        value={loginEmail}
+                        onChange={(e) => setLoginEmail(e.target.value)}
+                        placeholder="e.g. resident@gmail.com"
                         className="w-full pl-9 pr-3 py-2 rounded-xl border border-[#c0c9c2] text-xs font-semibold focus:border-[#003523] focus:ring-1 focus:ring-[#003523]"
                       />
                     </div>
-                    <p className="text-[11px] text-[#707973] mt-1">
-                      Enter your registered 10-digit Punjab mobile number or email.
-                    </p>
                   </div>
 
-                  {loginMethod === 'password' ? (
-                    <div>
-                      <div className="flex items-center justify-between mb-1">
-                        <label className="text-xs font-bold text-[#131b2e]">
-                          8-Letter Password
-                        </label>
-                        <button
-                          type="button"
-                          onClick={() => setLoginMethod('otp')}
-                          className="text-[11px] text-[#003523] font-semibold hover:underline"
-                        >
-                          Use OTP Instead
-                        </button>
-                      </div>
-                      <div className="relative">
-                        <Lock className="w-4 h-4 text-[#707973] absolute left-3 top-2.5" />
-                        <input
-                          type={showLoginPassword ? 'text' : 'password'}
-                          value={loginPassword}
-                          onChange={(e) => setLoginPassword(e.target.value)}
-                          placeholder="Enter your 8-letter password"
-                          className="w-full pl-9 pr-9 py-2 rounded-xl border border-[#c0c9c2] text-xs font-semibold focus:border-[#003523] focus:ring-1 focus:ring-[#003523]"
-                        />
-                        <button
-                          type="button"
-                          onClick={() => setShowLoginPassword(!showLoginPassword)}
-                          className="absolute right-3 top-2.5 text-gray-400 hover:text-gray-600"
-                        >
-                          {showLoginPassword ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
-                        </button>
-                      </div>
-                      <p className="text-[11px] text-[#707973] mt-1">
-                        Tip: For demo residents & partners, enter your password or demo code <span className="font-mono font-bold text-[#003523]">123456</span>.
-                      </p>
+                  <div>
+                    <div className="flex items-center justify-between mb-1">
+                      <label className="text-xs font-bold text-[#131b2e]">
+                        Password *
+                      </label>
+                      <button
+                        type="button"
+                        onClick={handleForgotPassword}
+                        disabled={isResetSending}
+                        className="text-[11px] text-[#003523] font-semibold hover:underline cursor-pointer"
+                      >
+                        {isResetSending ? 'Sending link...' : 'Forgot password?'}
+                      </button>
                     </div>
-                  ) : (
-                    <div>
-                      {otpSent ? (
-                        <div>
-                          <div className="flex items-center justify-between mb-1">
-                            <label className="text-xs font-bold text-[#131b2e]">
-                              6-Digit Verification Code
-                            </label>
-                            <button
-                              type="button"
-                              onClick={() => setOtpSent(false)}
-                              className="text-[11px] text-[#003523] font-semibold hover:underline"
-                            >
-                              Change Number
-                            </button>
-                          </div>
-                          <div className="relative">
-                            <Lock className="w-4 h-4 text-[#707973] absolute left-3 top-2.5" />
-                            <input
-                              type="text"
-                              maxLength={6}
-                              value={loginOtp}
-                              onChange={(e) => setLoginOtp(e.target.value)}
-                              placeholder="Auto-filled: 123456"
-                              className="w-full pl-9 pr-3 py-2 rounded-xl border border-[#c0c9c2] text-xs font-semibold focus:border-[#003523] focus:ring-1 focus:ring-[#003523] tracking-widest"
-                            />
-                          </div>
-                          <p className="text-[11px] text-emerald-700 mt-1 flex items-center space-x-1">
-                            <CheckCircle2 className="w-3 h-3" />
-                            <span>Demo OTP auto-approved for Kharar residents.</span>
-                          </p>
-                        </div>
-                      ) : null}
+                    <div className="relative">
+                      <Lock className="w-4 h-4 text-[#707973] absolute left-3 top-2.5" />
+                      <input
+                        type={showLoginPassword ? 'text' : 'password'}
+                        required
+                        value={loginPassword}
+                        onChange={(e) => setLoginPassword(e.target.value)}
+                        placeholder="Enter your account password"
+                        className="w-full pl-9 pr-9 py-2 rounded-xl border border-[#c0c9c2] text-xs font-semibold focus:border-[#003523] focus:ring-1 focus:ring-[#003523]"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => setShowLoginPassword(!showLoginPassword)}
+                        className="absolute right-3 top-2.5 text-gray-400 hover:text-gray-600 cursor-pointer"
+                        title={showLoginPassword ? 'Hide password' : 'Show password'}
+                      >
+                        {showLoginPassword ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
+                      </button>
                     </div>
-                  )}
+                  </div>
 
-                  {/* Primary CTA */}
-                  {loginMethod === 'password' ? (
-                    <button
-                      type="submit"
-                      disabled={isLoading || !loginInput.trim() || !loginPassword.trim()}
-                      className="w-full py-2.5 rounded-xl bg-[#003523] hover:bg-[#144d37] disabled:opacity-50 text-white font-bold text-xs flex items-center justify-center space-x-1.5 transition-all shadow-xs"
-                    >
-                      {isLoading ? (
-                        <span>Verifying...</span>
-                      ) : (
-                        <>
-                          <CheckCircle2 className="w-3.5 h-3.5" />
-                          <span>Sign In with Password</span>
-                        </>
-                      )}
-                    </button>
-                  ) : !otpSent ? (
-                    <button
-                      type="button"
-                      disabled={isLoading || !loginInput.trim()}
-                      onClick={handleSendOtp}
-                      className="w-full py-2.5 rounded-xl bg-[#003523] hover:bg-[#144d37] disabled:opacity-50 text-white font-bold text-xs flex items-center justify-center space-x-1.5 transition-all shadow-xs"
-                    >
-                      {isLoading ? (
-                        <span>Sending Code...</span>
-                      ) : (
-                        <>
-                          <span>Get OTP / Continue</span>
-                          <ArrowRight className="w-3.5 h-3.5" />
-                        </>
-                      )}
-                    </button>
-                  ) : (
-                    <button
-                      type="submit"
-                      disabled={isLoading}
-                      className="w-full py-2.5 rounded-xl bg-[#003523] hover:bg-[#144d37] disabled:opacity-50 text-white font-bold text-xs flex items-center justify-center space-x-1.5 transition-all shadow-xs"
-                    >
-                      {isLoading ? (
-                        <span>Verifying...</span>
-                      ) : (
-                        <>
-                          <CheckCircle2 className="w-3.5 h-3.5" />
-                          <span>Verify & Log In</span>
-                        </>
-                      )}
-                    </button>
-                  )}
+                  <button
+                    type="submit"
+                    disabled={isLoading || !loginEmail.trim() || !loginPassword.trim()}
+                    className="w-full py-2.5 rounded-xl bg-[#003523] hover:bg-[#144d37] disabled:opacity-50 text-white font-bold text-xs flex items-center justify-center space-x-1.5 transition-all shadow-xs cursor-pointer"
+                  >
+                    {isLoading ? (
+                      <span>Verifying credentials...</span>
+                    ) : (
+                      <>
+                        <CheckCircle2 className="w-3.5 h-3.5" />
+                        <span>Sign In with Password</span>
+                      </>
+                    )}
+                  </button>
 
                   <p className="text-[10px] text-[#707973] text-center pt-0.5">
-                    By continuing, you acknowledge our{' '}
+                    By signing in, you acknowledge our{' '}
                     <button
                       type="button"
                       onClick={() => setIsDPDPNoticeOpen(true)}
-                      className="text-[#003523] underline font-bold"
+                      className="text-[#003523] underline font-bold cursor-pointer"
                     >
                       DPDP Section 5 Privacy Notice
                     </button>
                     .
                   </p>
-
-                  {/* Quick One-Click Demo Residents */}
-                  <div className="pt-3 border-t border-[#c0c9c2]/40">
-                    <p className="text-[11px] font-bold text-[#707973] mb-2 uppercase tracking-wider flex items-center justify-between">
-                      <span>Quick Test with Verified Resident:</span>
-                    </p>
-                    <div className="grid grid-cols-1 gap-1.5">
-                      {customers.slice(0, 3).map((cust) => (
-                        <button
-                          key={cust.id}
-                          type="button"
-                          onClick={() => handleQuickDemoSelect(cust)}
-                          className="w-full p-2 rounded-lg bg-[#faf8ff] hover:bg-[#e2e7ff] border border-[#c0c9c2]/40 text-left text-xs flex items-center justify-between transition-colors group"
-                        >
-                          <div>
-                            <div className="font-bold text-[#131b2e] group-hover:text-[#003523]">
-                              {cust.name}
-                            </div>
-                            <div className="text-[11px] text-[#707973]">
-                              {cust.phone} · {cust.locality.split(',')[0]}
-                            </div>
-                          </div>
-                          <span className="text-[11px] font-bold text-[#003523]">
-                            Login →
-                          </span>
-                        </button>
-                      ))}
-                    </div>
-                  </div>
                 </form>
               )}
 
-              {/* REGISTRATION TAB */}
+              {/* 2. REGISTRATION TAB */}
               {mode === 'register' && (
                 <form onSubmit={handleRegisterSubmit} className="space-y-3 pt-1">
                   <div>
@@ -811,14 +651,18 @@ export const AuthModal: React.FC = () => {
                       placeholder="e.g. 98150 12345"
                       className="w-full p-2 rounded-xl border border-[#c0c9c2] text-xs font-semibold focus:border-[#003523] focus:ring-1 focus:ring-[#003523]"
                     />
+                    {regPhone && !regPhoneValidation.isValid && (
+                      <p className="text-[10px] text-red-600 mt-1 font-medium">{regPhoneValidation.message}</p>
+                    )}
                   </div>
 
                   <div>
                     <label className="block text-xs font-bold text-[#131b2e] mb-1">
-                      Email Address (Optional)
+                      Email Address *
                     </label>
                     <input
                       type="email"
+                      required
                       value={regEmail}
                       onChange={(e) => setRegEmail(e.target.value)}
                       placeholder="e.g. gsingh@gmail.com"
@@ -856,19 +700,19 @@ export const AuthModal: React.FC = () => {
                     />
                   </div>
 
-                  {/* MANDATORY 8-CHAR STRONG PASSWORD */}
+                  {/* Password with Strength Hint */}
                   <div className="p-3.5 rounded-xl bg-[#faf8ff] border border-[#c0c9c2]/60 space-y-3">
                     <div className="flex items-center justify-between">
                       <span className="font-bold text-xs text-[#131b2e] flex items-center space-x-1.5">
                         <Lock className="w-3.5 h-3.5 text-[#003523]" />
-                        <span>Set 8-Letter Strong Password (Mandatory) *</span>
+                        <span>Account Password (Min 8 Characters) *</span>
                       </span>
                       {regPassword && (
                         <span
                           className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${
-                            regPasswordValidation.strengthLabel === 'Strong'
+                            regPasswordValidation.score === 3
                               ? 'bg-emerald-100 text-emerald-800'
-                              : regPasswordValidation.strengthLabel === 'Medium'
+                              : regPasswordValidation.score === 2
                               ? 'bg-amber-100 text-amber-800'
                               : 'bg-red-100 text-red-800'
                           }`}
@@ -879,9 +723,6 @@ export const AuthModal: React.FC = () => {
                     </div>
 
                     <div>
-                      <label className="block text-[11px] font-semibold text-[#404943] mb-1">
-                        Password (8+ characters) *
-                      </label>
                       <div className="relative">
                         <Lock className="w-3.5 h-3.5 text-gray-400 absolute left-3 top-2.5" />
                         <input
@@ -895,19 +736,14 @@ export const AuthModal: React.FC = () => {
                         <button
                           type="button"
                           onClick={() => setShowRegPassword(!showRegPassword)}
-                          className="absolute right-3 top-2.5 text-gray-400 hover:text-gray-600"
+                          className="absolute right-3 top-2.5 text-gray-400 hover:text-gray-600 cursor-pointer"
                         >
                           {showRegPassword ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
                         </button>
                       </div>
-                      <div className="mt-1 text-[10px] flex items-center justify-between">
-                        <span className={regPasswordValidation.lengthOk ? 'text-emerald-700 font-bold' : 'text-red-600 font-semibold'}>
-                          {regPassword.length}/8 characters {regPasswordValidation.lengthOk ? '✓' : '(minimum 8 letters)'}
-                        </span>
-                        <span className="text-[10px] text-[#707973]">
-                          {regPasswordValidation.hasNumberOrSpecial ? 'Has numbers/symbols ✓' : 'Add numbers or symbols'}
-                        </span>
-                      </div>
+                      {regPasswordValidation.message && (
+                        <p className="text-[10px] text-red-600 mt-1 font-medium">{regPasswordValidation.message}</p>
+                      )}
                     </div>
 
                     <div>
@@ -921,13 +757,13 @@ export const AuthModal: React.FC = () => {
                           required
                           value={regConfirmPassword}
                           onChange={(e) => setRegConfirmPassword(e.target.value)}
-                          placeholder="Re-enter 8-letter password"
+                          placeholder="Re-enter password"
                           className="w-full pl-9 pr-9 py-2 rounded-xl border border-[#c0c9c2] text-xs font-semibold focus:border-[#003523] focus:ring-1 focus:ring-[#003523]"
                         />
                         <button
                           type="button"
                           onClick={() => setShowRegConfirmPassword(!showRegConfirmPassword)}
-                          className="absolute right-3 top-2.5 text-gray-400 hover:text-gray-600"
+                          className="absolute right-3 top-2.5 text-gray-400 hover:text-gray-600 cursor-pointer"
                         >
                           {showRegConfirmPassword ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
                         </button>
@@ -944,7 +780,7 @@ export const AuthModal: React.FC = () => {
                     </div>
                   </div>
 
-                  {/* One-Time DPDP Act 2023 Consent on Account Creation */}
+                  {/* DPDP Consent Checkbox */}
                   <div
                     className={`p-3 rounded-xl border transition-all space-y-1.5 ${
                       regConsentError
@@ -968,23 +804,13 @@ export const AuthModal: React.FC = () => {
                         htmlFor="reg-dpdp-consent"
                         className="text-[11px] text-[#131b2e] leading-snug cursor-pointer select-none"
                       >
-                        <span className="font-bold text-[#003523]">DPDP Act 2023 Consent (One-Time): </span>
-                        I freely consent to UrbanCare Solution processing my contact and doorstep address for technician dispatch and 30-day workmanship warranty fulfillment.
+                        <span className="font-bold text-[#003523]">DPDP Act 2023 Consent: </span>
+                        I consent to UrbanCare Solution processing my contact and address details solely for technician dispatch and warranty fulfillment.
                       </label>
-                    </div>
-                    <div className="flex items-center justify-between pl-6 text-[10px] text-[#707973]">
-                      <span>Purpose-bound · One-time consent</span>
-                      <button
-                        type="button"
-                        onClick={() => setIsDPDPNoticeOpen(true)}
-                        className="text-[#003523] hover:underline font-bold"
-                      >
-                        Read Section 5 Notice
-                      </button>
                     </div>
                     {regConsentError && (
                       <p className="text-[10px] text-[#ba1a1a] font-bold pl-6">
-                        * Please check the consent box to create your account under the DPDP Act.
+                        * Please accept the consent terms to create your account.
                       </p>
                     )}
                   </div>
@@ -995,10 +821,11 @@ export const AuthModal: React.FC = () => {
                       isLoading ||
                       !regName.trim() ||
                       !regPhone.trim() ||
-                      regPassword.length < 8 ||
+                      !regEmail.trim() ||
+                      !regPasswordValidation.isValid ||
                       regPassword !== regConfirmPassword
                     }
-                    className="w-full py-2.5 mt-2 rounded-xl bg-[#003523] hover:bg-[#144d37] disabled:opacity-50 text-white font-bold text-xs flex items-center justify-center space-x-1.5 transition-all shadow-xs"
+                    className="w-full py-2.5 mt-2 rounded-xl bg-[#003523] hover:bg-[#144d37] disabled:opacity-50 text-white font-bold text-xs flex items-center justify-center space-x-1.5 transition-all shadow-xs cursor-pointer"
                   >
                     {isLoading ? (
                       <span>Creating Account...</span>
@@ -1012,201 +839,40 @@ export const AuthModal: React.FC = () => {
                 </form>
               )}
 
-              {/* STAFF & PARTNER PORTAL TAB - STRICT PASSWORD AUTHENTICATION */}
+              {/* 3. STAFF & PARTNER PORTAL TAB */}
               {mode === 'staff' && (
                 <form onSubmit={handleStaffLoginSubmit} className="space-y-3.5 pt-1">
-                  {/* Informational banner */}
                   <div className="p-3 bg-[#f2f3ff] rounded-xl border border-[#c0c9c2]/50 text-xs text-[#404943]">
                     <p className="font-bold text-[#003523] mb-1 flex items-center space-x-1.5">
                       <ShieldCheck className="w-4 h-4 text-[#003523]" />
                       <span>Role-Protected Staff & Trade Partner Sign In</span>
                     </p>
                     <p className="text-[11px] text-[#707973] leading-relaxed">
-                      Every technician and vendor must log in with their password. You will strictly access and view only your assigned work.
+                      Staff accounts are provisioned by Operations. Sign in with your assigned staff email and password.
                     </p>
                   </div>
 
-                  {/* Role Selector Segmented Controls */}
                   <div>
-                    <label className="block text-xs font-bold text-[#131b2e] mb-1.5">
-                      Select Your Staff Persona Role:
+                    <label className="block text-xs font-bold text-[#131b2e] mb-1">
+                      Staff Email Address *
                     </label>
-                    <div className="grid grid-cols-3 gap-1.5 p-1 bg-[#faf8ff] rounded-xl border border-[#c0c9c2]/50 text-xs">
-                      <button
-                        type="button"
-                        onClick={() => handleStaffRoleChange('employee')}
-                        className={`py-2 px-1 rounded-lg font-bold flex flex-col items-center justify-center space-y-1 transition-all cursor-pointer ${
-                          staffRole === 'employee'
-                            ? 'bg-[#003523] text-white shadow-xs'
-                            : 'text-[#707973] hover:text-[#131b2e] hover:bg-white'
-                        }`}
-                      >
-                        <Wrench className="w-4 h-4" />
-                        <span className="text-[10px]">Technician</span>
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => handleStaffRoleChange('vendor')}
-                        className={`py-2 px-1 rounded-lg font-bold flex flex-col items-center justify-center space-y-1 transition-all cursor-pointer ${
-                          staffRole === 'vendor'
-                            ? 'bg-[#fe932c] text-[#002114] shadow-xs'
-                            : 'text-[#707973] hover:text-[#131b2e] hover:bg-white'
-                        }`}
-                      >
-                        <HardHat className="w-4 h-4" />
-                        <span className="text-[10px]">Partner</span>
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => handleStaffRoleChange('operations')}
-                        className={`py-2 px-1 rounded-lg font-bold flex flex-col items-center justify-center space-y-1 transition-all cursor-pointer ${
-                          staffRole === 'operations'
-                            ? 'bg-[#003523] text-white shadow-xs'
-                            : 'text-[#707973] hover:text-[#131b2e] hover:bg-white'
-                        }`}
-                      >
-                        <ShieldCheck className="w-4 h-4" />
-                        <span className="text-[10px]">Operations</span>
-                      </button>
+                    <div className="relative">
+                      <Mail className="w-4 h-4 text-[#707973] absolute left-3 top-2.5" />
+                      <input
+                        type="email"
+                        required
+                        value={staffEmail}
+                        onChange={(e) => setStaffEmail(e.target.value)}
+                        placeholder="e.g. employee@urbancaresolution.in"
+                        className="w-full pl-9 pr-3 py-2 rounded-xl border border-[#c0c9c2] text-xs font-semibold focus:border-[#003523] focus:ring-1 focus:ring-[#003523]"
+                      />
                     </div>
                   </div>
 
-                  {/* Account Selector based on selected role */}
-                  {staffRole === 'employee' && (
-                    <div>
-                      <label className="block text-xs font-bold text-[#131b2e] mb-1">
-                        Select Field Technician Profile:
-                      </label>
-                      <div className="space-y-1.5 max-h-36 overflow-y-auto pr-0.5">
-                        {employees.map((emp) => (
-                          <label
-                            key={emp.id}
-                            className={`flex items-center justify-between p-2 rounded-lg border text-xs cursor-pointer transition-all ${
-                              selectedStaffEntityId === emp.id
-                                ? 'border-[#003523] bg-[#c0edd3]/30 font-bold text-[#003523]'
-                                : 'border-[#c0c9c2]/50 bg-white hover:bg-[#faf8ff] text-[#131b2e]'
-                            }`}
-                          >
-                            <div className="flex items-center space-x-2">
-                              <input
-                                type="radio"
-                                name="staffEmpAccount"
-                                checked={selectedStaffEntityId === emp.id}
-                                onChange={() => {
-                                  setSelectedStaffEntityId(emp.id);
-                                  setStaffPassword(emp.password || 'TechPass@101');
-                                }}
-                                className="text-[#003523] focus:ring-[#003523]"
-                              />
-                              <div>
-                                <span className="font-bold">{emp.name}</span>
-                                <span className="text-[10px] text-[#707973] ml-1.5">
-                                  {emp.employeeCode || emp.id} · {emp.role || 'Tech'}
-                                </span>
-                              </div>
-                            </div>
-                            <span className="text-[10px] text-emerald-800 font-bold">
-                              {emp.rating} ★
-                            </span>
-                          </label>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-
-                  {staffRole === 'vendor' && (
-                    <div>
-                      <label className="block text-xs font-bold text-[#131b2e] mb-1">
-                        Select Vendor Partner Profile:
-                      </label>
-                      <div className="space-y-1.5 max-h-36 overflow-y-auto pr-0.5">
-                        {vendors.map((v) => (
-                          <label
-                            key={v.id}
-                            className={`flex items-center justify-between p-2 rounded-lg border text-xs cursor-pointer transition-all ${
-                              selectedStaffEntityId === v.id
-                                ? 'border-[#fe932c] bg-[#ffdcc3]/30 font-bold text-[#002114]'
-                                : 'border-[#c0c9c2]/50 bg-white hover:bg-[#faf8ff] text-[#131b2e]'
-                            }`}
-                          >
-                            <div className="flex items-center space-x-2">
-                              <input
-                                type="radio"
-                                name="staffVndAccount"
-                                checked={selectedStaffEntityId === v.id}
-                                onChange={() => {
-                                  setSelectedStaffEntityId(v.id);
-                                  setStaffPassword(v.password || 'MalwaPass@2026');
-                                }}
-                                className="text-[#003523] focus:ring-[#003523]"
-                              />
-                              <div>
-                                <div className="font-bold truncate max-w-[190px]">{v.businessName}</div>
-                                <div className="text-[10px] text-[#707973]">
-                                  {v.ownerName} · {v.id}
-                                </div>
-                              </div>
-                            </div>
-                            <span
-                              className={`text-[9px] font-bold px-1.5 py-0.2 rounded ${
-                                v.status === 'ACTIVE'
-                                  ? 'bg-emerald-100 text-emerald-800'
-                                  : v.status === 'PENDING_VERIFICATION'
-                                  ? 'bg-amber-100 text-amber-800'
-                                  : 'bg-red-100 text-red-800'
-                              }`}
-                            >
-                              {v.status === 'PENDING_VERIFICATION' ? 'PENDING' : v.status}
-                            </span>
-                          </label>
-                        ))}
-                      </div>
-
-                      {vendors.find((v) => v.id === selectedStaffEntityId)?.status === 'PENDING_VERIFICATION' && (
-                        <div className="mt-2 p-2 rounded-lg bg-amber-50 border border-amber-200 text-[11px] text-amber-950 flex items-start space-x-1.5">
-                          <span className="font-bold">⚠️ Notice:</span>
-                          <span>This partner profile is pending Operations Manager verification & activation.</span>
-                        </div>
-                      )}
-                    </div>
-                  )}
-
-                  {staffRole === 'operations' && (
-                    <div className="p-3 bg-[#faf8ff] rounded-xl border border-[#c0c9c2]/50 space-y-1">
-                      <div className="flex items-center space-x-2.5">
-                        <div className="w-8 h-8 rounded-lg bg-[#003523] text-white flex items-center justify-center font-bold">
-                          <ShieldCheck className="w-4 h-4 text-[#fe932c]" />
-                        </div>
-                        <div>
-                          <p className="text-xs font-bold text-[#131b2e]">
-                            Operations Command Supervisor (Harman)
-                          </p>
-                          <p className="text-[10px] text-[#707973]">
-                            Central Dispatch & Partner Verification
-                          </p>
-                        </div>
-                      </div>
-                      <p className="text-[10px] text-[#707973] pt-1">
-                        Login ID: <span className="font-mono font-bold text-[#003523]">ops@urbancaresolution.in</span> / <span className="font-mono">admin</span>
-                      </p>
-                    </div>
-                  )}
-
-                  {/* Password Input Field with eye toggle */}
                   <div>
-                    <div className="flex items-center justify-between mb-1">
-                      <label className="text-xs font-bold text-[#131b2e]">
-                        Account Password (Mandatory) *
-                      </label>
-                      <span className="text-[10px] text-emerald-800 font-mono font-bold bg-emerald-50 px-2 py-0.5 rounded border border-emerald-200">
-                        Demo:{' '}
-                        {staffRole === 'employee'
-                          ? employees.find((e) => e.id === selectedStaffEntityId)?.password || 'TechPass@101'
-                          : staffRole === 'vendor'
-                          ? vendors.find((v) => v.id === selectedStaffEntityId)?.password || 'MalwaPass@2026'
-                          : 'OpsLead@2026'}
-                      </span>
-                    </div>
+                    <label className="block text-xs font-bold text-[#131b2e] mb-1">
+                      Password *
+                    </label>
                     <div className="relative">
                       <Lock className="w-4 h-4 text-[#707973] absolute left-3 top-2.5" />
                       <input
@@ -1214,7 +880,7 @@ export const AuthModal: React.FC = () => {
                         required
                         value={staffPassword}
                         onChange={(e) => setStaffPassword(e.target.value)}
-                        placeholder="Enter password or 123456"
+                        placeholder="Enter your staff password"
                         className="w-full pl-9 pr-9 py-2 rounded-xl border border-[#c0c9c2] text-xs font-semibold focus:border-[#003523] focus:ring-1 focus:ring-[#003523]"
                       />
                       <button
@@ -1226,29 +892,19 @@ export const AuthModal: React.FC = () => {
                         {showStaffPassword ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
                       </button>
                     </div>
-                    <p className="text-[10px] text-[#707973] mt-1">
-                      Strict authentication: password verification ensures you view only your assigned work.
-                    </p>
                   </div>
 
-                  {/* Submit Button */}
                   <button
                     type="submit"
-                    disabled={isLoading || !staffPassword.trim()}
+                    disabled={isLoading || !staffEmail.trim() || !staffPassword.trim()}
                     className="w-full py-2.5 rounded-xl bg-[#003523] hover:bg-[#144d37] disabled:opacity-50 text-white font-bold text-xs flex items-center justify-center space-x-1.5 transition-all shadow-xs cursor-pointer"
                   >
                     {isLoading ? (
-                      <span>Verifying Credentials...</span>
+                      <span>Verifying credentials...</span>
                     ) : (
                       <>
                         <KeyRound className="w-3.5 h-3.5 text-[#b6efd1]" />
-                        <span>
-                          {staffRole === 'employee'
-                            ? 'Sign In to Technician Hub'
-                            : staffRole === 'vendor'
-                            ? 'Sign In to Partner Portal'
-                            : 'Sign In to Operations Command'}
-                        </span>
+                        <span>Sign In to Staff Workspace</span>
                       </>
                     )}
                   </button>

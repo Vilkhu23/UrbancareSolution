@@ -9,7 +9,8 @@ interface VendorCompleteModalProps {
   onConfirmComplete: (
     paymentMode: 'CASH' | 'UPI' | 'ONLINE',
     notes?: string,
-    photos?: string[]
+    photos?: string[],
+    customerOtp?: string
   ) => void;
 }
 
@@ -38,6 +39,7 @@ export const VendorCompleteModal: React.FC<VendorCompleteModalProps> = ({
   const [notes, setNotes] = useState<string>('Work completed to customer satisfaction. Equipment tested and operational.');
   const [photos, setPhotos] = useState<string[]>([]);
   const [customPhotoUrl, setCustomPhotoUrl] = useState<string>('');
+  const [customerOtp, setCustomerOtp] = useState<string>('');
 
   if (!isOpen || !request) return null;
 
@@ -60,7 +62,11 @@ export const VendorCompleteModal: React.FC<VendorCompleteModalProps> = ({
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    onConfirmComplete(paymentMode, notes.trim(), photos.length > 0 ? photos : undefined);
+    if (customerOtp.trim().length !== 4) {
+      alert('Please enter the 4-digit customer verification OTP provided by the resident.');
+      return;
+    }
+    onConfirmComplete(paymentMode, notes.trim(), photos.length > 0 ? photos : undefined, customerOtp.trim());
     onClose();
   };
 
@@ -232,6 +238,29 @@ export const VendorCompleteModal: React.FC<VendorCompleteModalProps> = ({
               onChange={(e) => setNotes(e.target.value)}
               placeholder="e.g. Capacitor 45uF replaced, coils washed, cooling temperature tested at 16°C..."
               className="w-full text-xs p-3 rounded-xl border border-gray-200 focus:outline-none focus:ring-2 focus:ring-[#003523]"
+            />
+          </div>
+
+          {/* Customer Verification OTP (Mandatory) */}
+          <div className="p-3.5 bg-emerald-50 rounded-xl border border-emerald-200 space-y-2">
+            <div className="flex items-center justify-between">
+              <label className="text-xs font-bold text-emerald-950 flex items-center space-x-1.5">
+                <ShieldCheck className="w-4 h-4 text-[#003523]" />
+                <span>Customer Verification OTP (Mandatory) *</span>
+              </label>
+              <span className="text-[10px] text-emerald-800 font-semibold">Ask resident on-site</span>
+            </div>
+            <p className="text-[11px] text-emerald-900 leading-relaxed">
+              Ask the customer for the 4-digit completion code displayed on their active booking screen.
+            </p>
+            <input
+              type="text"
+              maxLength={4}
+              required
+              value={customerOtp}
+              onChange={(e) => setCustomerOtp(e.target.value.replace(/\D/g, ''))}
+              placeholder="••••"
+              className="w-full text-center tracking-widest text-lg font-black p-2.5 bg-white border border-emerald-300 rounded-xl focus:border-[#003523] text-gray-900 shadow-inner"
             />
           </div>
 

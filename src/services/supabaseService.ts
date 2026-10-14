@@ -10,7 +10,9 @@ import {
   AuditLog,
   OpsSettings,
   HomeProjectRequest,
-  CustomerReview
+  CustomerReview,
+  ServiceItem,
+  PriceType
 } from '../types';
 import { LOCALITIES } from '../data/initialData';
 
@@ -28,6 +30,7 @@ export interface ServiceCategory {
 
 export const mapCustomerFromDb = (row: any): CustomerRecord => ({
   id: row.id,
+  user_id: row.user_id || undefined,
   name: row.name,
   phone: row.phone,
   email: row.email || '',
@@ -42,6 +45,7 @@ export const mapCustomerFromDb = (row: any): CustomerRecord => ({
 
 export const mapCustomerToDb = (cust: CustomerRecord) => ({
   id: cust.id,
+  user_id: cust.user_id || null,
   name: cust.name,
   phone: cust.phone,
   email: cust.email || null,
@@ -56,6 +60,7 @@ export const mapCustomerToDb = (cust: CustomerRecord) => ({
 
 export const mapEmployeeFromDb = (row: any): Employee => ({
   id: row.id,
+  user_id: row.user_id || undefined,
   employeeCode: row.employee_code,
   name: row.name,
   mobile: row.mobile,
@@ -74,6 +79,7 @@ export const mapEmployeeFromDb = (row: any): Employee => ({
 
 export const mapEmployeeToDb = (emp: Employee) => ({
   id: emp.id,
+  user_id: emp.user_id || null,
   employee_code: emp.employeeCode || emp.id,
   name: emp.name,
   mobile: emp.mobile,
@@ -84,11 +90,12 @@ export const mapEmployeeToDb = (emp: Employee) => ({
   service_areas: emp.serviceAreas,
   rating: emp.rating,
   completed_jobs: emp.completedJobs,
-  password: emp.password || 'TechPass@101'
+  password: emp.password || null
 });
 
 export const mapVendorFromDb = (row: any): Vendor => ({
   id: row.id,
+  user_id: row.user_id || undefined,
   businessName: row.business_name,
   ownerName: row.owner_name,
   mobile: row.mobile,
@@ -116,6 +123,7 @@ export const mapVendorFromDb = (row: any): Vendor => ({
 
 export const mapVendorToDb = (vnd: Vendor) => ({
   id: vnd.id,
+  user_id: vnd.user_id || null,
   business_name: vnd.businessName,
   owner_name: vnd.ownerName,
   mobile: vnd.mobile,
@@ -126,13 +134,14 @@ export const mapVendorToDb = (vnd: Vendor) => ({
   experience_years: vnd.experienceYears,
   rating: vnd.rating,
   plan: vnd.plan,
-  password: vnd.password || 'MalwaPass@2026'
+  password: vnd.password || null
 });
 
 export const mapServiceRequestFromDb = (row: any): ServiceRequest => {
   const now = new Date().toLocaleString('en-IN', { dateStyle: 'short', timeStyle: 'short' });
   return {
     id: row.id,
+    user_id: row.user_id || undefined,
     customerName: row.customer_name,
     customerPhone: row.customer_phone,
     address: row.customer_address || 'Address provided on booking',
@@ -171,6 +180,7 @@ export const mapServiceRequestFromDb = (row: any): ServiceRequest => {
 
 export const mapServiceRequestToDb = (req: ServiceRequest) => ({
   id: req.id,
+  user_id: req.user_id || null,
   customer_name: req.customerName,
   customer_phone: req.customerPhone,
   customer_address: req.address,
@@ -195,16 +205,177 @@ export const mapServiceRequestToDb = (req: ServiceRequest) => ({
   completion_photos: req.completionPhotos || [],
   completion_notes: req.materialInfo || null,
   completion_code: null,
-  customer_otp: '4192'
+  customer_otp: null
 });
 
+// Map PostgreSQL services row to Application ServiceItem
+export const mapServiceItemFromDb = (row: any, categories?: ServiceCategory[]): ServiceItem => {
+  const cat = categories?.find((c) => c.id === row.category_id)?.name || row.category_id || 'General';
+  const price = Number(row.price) || 0;
+  const originalPrice = Number(row.market_average) || price;
+  const features = Array.isArray(row.features) ? row.features : [];
+  const duration = row.duration_minutes ? `${row.duration_minutes} Mins` : '60 Mins';
+
+  return {
+    id: row.id,
+    name: row.name,
+    category: cat,
+    subcategory: row.subcategory || 'General Repairs',
+    description: row.description || '',
+    price_type: 'FIXED' as PriceType,
+    base_price: price,
+    original_price: originalPrice,
+    discount: originalPrice > price ? `Save ₹${originalPrice - price}` : undefined,
+    visit_fee: 99,
+    tax: 0,
+    material_policy: 'Transparent billing: Standard spares billed at MRP with pre-approval.',
+    duration,
+    warranty: '30-Day UrbanCare Guarantee',
+    included_items: features,
+    excluded_items: [],
+    active: true,
+    effective_from: '2026-01-01',
+    basePrice: price,
+    originalPrice,
+    visitFee: 99,
+    pricingType: 'fixed',
+    materialPolicy: 'Transparent billing: Standard spares billed at MRP with pre-approval.',
+    estimatedDuration: duration,
+    included: features,
+    excluded: [],
+    serviceAreas: LOCALITIES,
+    sortOrder: Number(row.display_order) || 1,
+    rating: Number(row.rating) || 4.8
+  };
+};
+
 // ==============================================================================
-// 2. SUPABASE ASYNC CRUD METHODS (With Graceful Offline Fallbacks)
+// 2. SUPABASE ASYNC CRUD METHODS (Role-Based & Public Loaders)
 // ==============================================================================
 
 /**
+ * Loads public service catalog (services & categories) from Supabase.
+ * Publicly accessible via RLS policies.
+ */
+export const loadCatalogFromSupabase = async (): Promise<{
+  services: ServiceItem[];
+  categories: ServiceCategory[];
+} | null> => {
+  if (!isSupabaseConfigured()) return null;
+
+  try {
+    const [categoriesRes, servicesRes] = await Promise.all([
+      supabase.from('service_categories').select('*').order('display_order'),
+      supabase.from('services').select('*').order('name')
+    ]);
+
+    if (servicesRes.error) {
+      console.error('Supabase services fetch error:', servicesRes.error);
+      throw servicesRes.error;
+    }
+
+    const categories: ServiceCategory[] = categoriesRes.data || [];
+    const services: ServiceItem[] = (servicesRes.data || []).map((row: any) =>
+      mapServiceItemFromDb(row, categories)
+    );
+
+    return { services, categories };
+  } catch (error) {
+    console.error('Failed to load catalog from Supabase:', error);
+    throw error;
+  }
+};
+
+export interface RoleDataResult {
+  customers?: CustomerRecord[] | null;
+  employees?: Employee[] | null;
+  vendors?: Vendor[] | null;
+  requests?: ServiceRequest[] | null;
+  ledger?: OpportunityLedgerEntry[] | null;
+  complaints?: ComplaintRecord[] | null;
+  payments?: PaymentRecord[] | null;
+  opsSettings?: OpsSettings | null;
+  services?: ServiceItem[] | null;
+  categories?: ServiceCategory[] | null;
+}
+
+/**
+ * Role-based loader: customers load only their own records,
+ * technicians load only their assigned jobs, vendors load only their own jobs/ledger,
+ * admin and ops load full tables.
+ */
+export const loadUserDataByRoleFromSupabase = async (
+  role: string,
+  userId: string
+): Promise<RoleDataResult | null> => {
+  if (!isSupabaseConfigured()) return null;
+
+  try {
+    if (role === 'customer') {
+      const [custRes, reqRes] = await Promise.all([
+        supabase.from('customers').select('*').eq('user_id', userId).maybeSingle(),
+        supabase.from('service_requests').select('*').eq('user_id', userId).order('created_at', { ascending: false })
+      ]);
+
+      return {
+        customers: custRes.data ? [mapCustomerFromDb(custRes.data)] : [],
+        requests: reqRes.data ? reqRes.data.map(mapServiceRequestFromDb) : []
+      };
+    } else if (role === 'technician') {
+      const empRes = await supabase.from('employees').select('*').eq('user_id', userId).maybeSingle();
+      const emp = empRes.data ? mapEmployeeFromDb(empRes.data) : null;
+      let requests: ServiceRequest[] = [];
+      if (emp) {
+        // RLS also enforces assigned_to->>'id' = emp.id
+        const reqRes = await supabase.from('service_requests').select('*').order('created_at', { ascending: false });
+        requests = reqRes.data ? reqRes.data.map(mapServiceRequestFromDb) : [];
+      }
+      return {
+        employees: emp ? [emp] : [],
+        requests
+      };
+    } else if (role === 'vendor') {
+      const vndRes = await supabase.from('vendors').select('*').eq('user_id', userId).maybeSingle();
+      const vnd = vndRes.data ? mapVendorFromDb(vndRes.data) : null;
+      let requests: ServiceRequest[] = [];
+      let ledger: OpportunityLedgerEntry[] = [];
+      if (vnd) {
+        const [reqRes, ledRes] = await Promise.all([
+          supabase.from('service_requests').select('*').order('created_at', { ascending: false }),
+          supabase.from('opportunity_ledger').select('*').eq('vendor_id', vnd.id).order('created_at', { ascending: false })
+        ]);
+        requests = reqRes.data ? reqRes.data.map(mapServiceRequestFromDb) : [];
+        ledger = ledRes.data ? ledRes.data.map((row: any) => ({
+          id: row.id,
+          vendorId: row.vendor_id,
+          vendorName: row.vendor_name,
+          action: row.action,
+          change: -Number(row.opportunities_deducted || 1),
+          balanceAfter: Number(row.remaining_balance || 0),
+          reason: row.notes || 'Opportunity Dispatch Deducted',
+          performedBy: 'Operations Dispatch Engine',
+          timestamp: row.timestamp || new Date().toISOString(),
+          serviceRequestId: row.request_id || undefined
+        })) : [];
+      }
+      return {
+        vendors: vnd ? [vnd] : [],
+        requests,
+        ledger
+      };
+    } else if (role === 'admin' || role === 'ops_manager') {
+      return await loadAllDataFromSupabase();
+    }
+    return null;
+  } catch (error) {
+    console.error(`Failed to load data for role ${role}:`, error);
+    throw error;
+  }
+};
+
+/**
  * Loads all initial datasets from Supabase PostgreSQL tables.
- * Returns null if Supabase is not configured or an error occurs.
+ * Used exclusively by admin / ops_manager roles.
  */
 export const loadAllDataFromSupabase = async () => {
   if (!isSupabaseConfigured()) return null;
@@ -238,7 +409,7 @@ export const loadAllDataFromSupabase = async () => {
       dispatchCenterName: 'UrbanCare Operations Command - Kharar Hub',
       emergencyHotline: opsRes.data.emergency_contact || '+91 98889 00122',
       supportEmail: 'ops@urbancaresolution.in',
-      password: opsRes.data.password || 'OpsLead@2026',
+      password: opsRes.data.password || '',
       defaultVisitFee: 99,
       defaultGstPercent: 18,
       requireSupervisorSignoff: true,
@@ -248,12 +419,17 @@ export const loadAllDataFromSupabase = async () => {
       activeLocalities: LOCALITIES
     } : null;
 
+    const categories: ServiceCategory[] = categoriesRes.data || [];
+    const mappedServices: ServiceItem[] | null = servicesRes.data && servicesRes.data.length > 0
+      ? servicesRes.data.map((row: any) => mapServiceItemFromDb(row, categories))
+      : null;
+
     return {
       customers: customersRes.data && customersRes.data.length > 0 ? customersRes.data.map(mapCustomerFromDb) : null,
       employees: employeesRes.data && employeesRes.data.length > 0 ? employeesRes.data.map(mapEmployeeFromDb) : null,
       vendors: vendorsRes.data && vendorsRes.data.length > 0 ? vendorsRes.data.map(mapVendorFromDb) : null,
       requests: requestsRes.data && requestsRes.data.length > 0 ? requestsRes.data.map(mapServiceRequestFromDb) : null,
-      services: servicesRes.data || null,
+      services: mappedServices,
       categories: categoriesRes.data || null,
       ledger: ledgerRes.data && ledgerRes.data.length > 0 ? ledgerRes.data.map((row: any) => ({
         id: row.id,
@@ -272,7 +448,7 @@ export const loadAllDataFromSupabase = async () => {
       opsSettings: mappedOpsSettings
     };
   } catch (error) {
-    console.warn('Supabase fetch failed, falling back to local storage:', error);
+    console.error('Supabase fetch failed:', error);
     return null;
   }
 };
@@ -380,6 +556,7 @@ export const syncComplaintToSupabase = async (complaint: ComplaintRecord): Promi
       .from('complaints')
       .upsert({
         id: complaint.id,
+        user_id: complaint.user_id || null,
         request_id: complaint.requestId,
         customer_name: complaint.customerName,
         customer_phone: complaint.customerPhone,
@@ -398,24 +575,193 @@ export const syncComplaintToSupabase = async (complaint: ComplaintRecord): Promi
 };
 
 /**
- * Persists a payment record to Supabase PostgreSQL.
+/**
+ * Records a verified on-site cash/UPI payment via the database RPC record_payment().
+ * Enforces exact total match, assignment check, and single payment rule.
+ */
+export const recordPaymentViaRpc = async (
+  requestId: string,
+  amount: number,
+  method: 'CASH' | 'UPI' | 'ONLINE'
+): Promise<{ success: boolean; message: string }> => {
+  if (!isSupabaseConfigured()) {
+    if (!import.meta.env.DEV) {
+      return { success: false, message: 'Service not configured. Please contact support.' };
+    }
+    return { success: true, message: 'Offline mode: payment recorded locally.' };
+  }
+
+  try {
+    const { data, error } = await supabase.rpc('record_payment', {
+      p_request_id: requestId,
+      p_amount: amount,
+      p_method: method
+    });
+
+    if (error) {
+      console.error('record_payment RPC error:', error);
+      return { success: false, message: error.message };
+    }
+
+    return {
+      success: true,
+      message: (data as any)?.message || 'Payment recorded successfully.'
+    };
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error('Failed to record payment via RPC:', err);
+    return { success: false, message: msg };
+  }
+};
+
+export interface VerifyJobOtpResult {
+  success: boolean;
+  message: string;
+  code?: 'VERIFIED' | 'INVALID_OTP' | 'LOCKED' | 'ALREADY_COMPLETED' | 'RPC_ERROR';
+  attemptsLeft?: number;
+}
+
+/**
+ * Verifies on-site customer completion OTP via the database RPC verify_job_otp().
+ * Checks assignment, enforces 5-attempt rate-limiting, and marks request completed.
+ */
+export const verifyJobOtpViaRpc = async (
+  requestId: string,
+  otp: string
+): Promise<VerifyJobOtpResult> => {
+  if (!isSupabaseConfigured()) {
+    if (!import.meta.env.DEV) {
+      return { success: false, message: 'Service not configured. Please contact support.', code: 'RPC_ERROR' };
+    }
+    return { success: true, message: 'Offline mode: OTP verified locally.', code: 'VERIFIED' };
+  }
+
+  try {
+    const { data, error } = await supabase.rpc('verify_job_otp', {
+      p_request_id: requestId,
+      p_otp: otp.trim()
+    });
+
+    if (error) {
+      console.error('verify_job_otp RPC error:', error);
+      return { success: false, message: error.message, code: 'RPC_ERROR' };
+    }
+
+    const res = data as {
+      success?: boolean;
+      code?: 'VERIFIED' | 'INVALID_OTP' | 'LOCKED' | 'ALREADY_COMPLETED';
+      message?: string;
+      attempts_left?: number;
+    } | null;
+
+    if (res && res.success === false) {
+      let userFriendlyMessage = res.message || 'OTP verification failed.';
+      if (res.code === 'LOCKED') {
+        userFriendlyMessage =
+          'Maximum OTP verification attempts (5) exceeded. Job is locked. Please contact the operations team to reset verification.';
+      } else if (res.code === 'INVALID_OTP' && typeof res.attempts_left === 'number') {
+        userFriendlyMessage = `Invalid OTP code. ${res.attempts_left} attempt${res.attempts_left === 1 ? '' : 's'} remaining before lockout.`;
+      }
+
+      return {
+        success: false,
+        message: userFriendlyMessage,
+        code: res.code,
+        attemptsLeft: res.attempts_left
+      };
+    }
+
+    return {
+      success: true,
+      message: res?.message || 'OTP verified successfully.',
+      code: res?.code || 'VERIFIED'
+    };
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error('Failed to verify OTP via RPC:', err);
+    return { success: false, message: msg, code: 'RPC_ERROR' };
+  }
+};
+
+/**
+ * Resets the OTP verification lockout counter for a service request (Ops Manager / Admin only).
+ */
+export const resetJobOtpLockViaRpc = async (
+  requestId: string
+): Promise<{ success: boolean; message: string }> => {
+  if (!isSupabaseConfigured()) {
+    return { success: true, message: 'Offline mode: lockout reset.' };
+  }
+
+  try {
+    const { data, error } = await supabase.rpc('reset_job_otp_lock', {
+      p_request_id: requestId
+    });
+
+    if (error) {
+      console.error('reset_job_otp_lock RPC error:', error);
+      return { success: false, message: error.message };
+    }
+
+    return {
+      success: true,
+      message: (data as any)?.message || 'OTP lockout reset successfully.'
+    };
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error('Failed to reset OTP lockout via RPC:', err);
+    return { success: false, message: msg };
+  }
+};
+
+/**
+ * Retrieves the customer verification secret OTP for the resident's active booking.
+ * Note: Staff accounts are denied access by RLS; only the customer holding user_id can read this.
+ */
+export const fetchCustomerBookingSecret = async (
+  requestId: string
+): Promise<{ customerOtp: string; completionCode: string } | null> => {
+  if (!isSupabaseConfigured()) {
+    if (!import.meta.env.DEV) {
+      return null;
+    }
+    // Generate deterministic demo code based on requestId for offline demonstration in DEV only
+    const hash = requestId.split('').reduce((acc, c) => acc + c.charCodeAt(0), 0);
+    const mockOtp = String(1000 + (hash % 9000));
+    return {
+      customerOtp: mockOtp,
+      completionCode: `PB${mockOtp}`
+    };
+  }
+
+  try {
+    const { data, error } = await supabase
+      .from('service_request_secrets')
+      .select('customer_otp, completion_code')
+      .eq('request_id', requestId)
+      .maybeSingle();
+
+    if (error || !data) return null;
+    return {
+      customerOtp: data.customer_otp,
+      completionCode: data.completion_code
+    };
+  } catch (err) {
+    console.error('Failed to fetch booking secret:', err);
+    return null;
+  }
+};
+
+/**
+ * Persists a payment record to Supabase PostgreSQL using record_payment RPC.
+ * Online gateway payments will be written by a payment webhook using the service_role key.
  */
 export const syncPaymentToSupabase = async (payment: PaymentRecord): Promise<boolean> => {
   if (!isSupabaseConfigured()) return false;
   try {
     const dbMethod = payment.mode === 'ONLINE_CARD' || payment.mode === 'NET_BANKING' ? 'ONLINE' : payment.mode;
-    const { error } = await supabase
-      .from('payments')
-      .upsert({
-        id: payment.id,
-        request_id: payment.requestId,
-        customer_name: payment.customerName,
-        amount: payment.amount,
-        method: dbMethod,
-        status: payment.status === 'SUCCESS' ? 'COMPLETED' : payment.status,
-        reference_id: payment.transactionRef || null
-      }, { onConflict: 'id' });
-    return !error;
+    const rpcResult = await recordPaymentViaRpc(payment.requestId, payment.amount, dbMethod as 'CASH' | 'UPI' | 'ONLINE');
+    return rpcResult.success;
   } catch (err) {
     console.error('Failed to sync payment to Supabase:', err);
     return false;
@@ -519,5 +865,71 @@ export const syncCustomerReviewToSupabase = async (review: CustomerReview): Prom
   } catch (err) {
     console.error('Failed to sync customer review to Supabase:', err);
     return false;
+  }
+};
+
+/**
+ * Checks whether a phone number is available for registration via check_phone_available() RPC.
+ * Returns true if available (not registered), false if already taken.
+ */
+export const checkPhoneAvailableViaRpc = async (phone: string): Promise<boolean> => {
+  if (!isSupabaseConfigured()) {
+    return true;
+  }
+
+  try {
+    const { data, error } = await supabase.rpc('check_phone_available', {
+      p_phone: phone.trim()
+    });
+
+    if (error) {
+      console.error('check_phone_available RPC error:', error);
+      if (error.message?.includes('RATE_LIMIT_EXCEEDED')) {
+        throw new Error('Too many phone availability checks. Please wait a moment.');
+      }
+      return true;
+    }
+
+    return Boolean(data);
+  } catch (err: unknown) {
+    if (err instanceof Error && err.message.includes('Too many')) {
+      throw err;
+    }
+    console.error('Failed to check phone availability via RPC:', err);
+    return true;
+  }
+};
+
+/**
+ * Releases a phone number from an account (Admin only) via admin_release_phone() RPC.
+ * Dissociates phone, resets verification, and writes to audit_logs.
+ */
+export const adminReleasePhoneViaRpc = async (
+  userId: string,
+  reason: string
+): Promise<{ success: boolean; message: string }> => {
+  if (!isSupabaseConfigured()) {
+    return { success: true, message: 'Offline mode: phone released locally.' };
+  }
+
+  try {
+    const { data, error } = await supabase.rpc('admin_release_phone', {
+      p_user_id: userId,
+      p_reason: reason.trim()
+    });
+
+    if (error) {
+      console.error('admin_release_phone RPC error:', error);
+      return { success: false, message: error.message };
+    }
+
+    return {
+      success: true,
+      message: (data as any)?.message || 'Mobile number released successfully.'
+    };
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error('Failed to release phone via RPC:', err);
+    return { success: false, message: msg };
   }
 };

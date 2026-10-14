@@ -5,6 +5,8 @@
 
 import React from 'react';
 import { AppProvider, useApp } from './context/AppContext';
+import { isSupabaseConfigured } from './lib/supabase';
+import { ServiceNotConfiguredScreen } from './components/ServiceNotConfiguredScreen';
 import { Navbar } from './components/layout/Navbar';
 import { BottomNav } from './components/layout/BottomNav';
 import { Footer } from './components/layout/Footer';
@@ -19,6 +21,8 @@ import { CustomerAccountPage } from './pages/CustomerAccountPage';
 import { AdminPortal } from './pages/admin/AdminPortal';
 import { VendorPortal } from './pages/vendor/VendorPortal';
 import { EmployeePortal } from './pages/employee/EmployeePortal';
+import { ResetPasswordPage } from './pages/ResetPasswordPage';
+import { NotAuthorizedPage } from './pages/NotAuthorizedPage';
 
 import { CartDrawer } from './components/customer/CartDrawer';
 import { ServiceDetailModal } from './components/customer/ServiceDetailModal';
@@ -34,7 +38,27 @@ import { DPDPDataRightsModal } from './components/dpdp/DPDPDataRightsModal';
 import { CheckCircle2, Info, AlertTriangle, AlertCircle, X } from 'lucide-react';
 
 const AppContent: React.FC = () => {
-  const { currentPage, setCurrentPage, currentRole, toasts, dismissToast, setIsAuthModalOpen } = useApp();
+  const {
+    currentPage,
+    setCurrentPage,
+    currentRole,
+    authProfile,
+    currentEmployeeId,
+    currentVendorId,
+    toasts,
+    dismissToast,
+    setIsAuthModalOpen
+  } = useApp();
+
+  // Detect Supabase password recovery token or query param on URL
+  React.useEffect(() => {
+    if (
+      window.location.hash.includes('type=recovery') ||
+      window.location.search.includes('reset=true')
+    ) {
+      setCurrentPage('reset-password');
+    }
+  }, [setCurrentPage]);
 
   const renderCurrentPage = () => {
     switch (currentPage) {
@@ -52,16 +76,33 @@ const AppContent: React.FC = () => {
         return <ContactPage />;
       case 'account':
         return <CustomerAccountPage />;
+      case 'reset-password':
+        return <ResetPasswordPage />;
+      case 'not-authorized':
+        return <NotAuthorizedPage requiredRoleName="Staff Member" portalName="Restricted Workspace" />;
       case 'admin':
-        if (currentRole !== 'operations') {
+        // If logged in as another role, reject with 403 NotAuthorizedPage
+        if (
+          authProfile &&
+          authProfile.role !== 'admin' &&
+          authProfile.role !== 'ops_manager'
+        ) {
+          return (
+            <NotAuthorizedPage
+              requiredRoleName="Operations Manager or Administrator"
+              portalName="Operations Command Center"
+            />
+          );
+        }
+        if (currentRole !== 'operations' && currentRole !== 'admin') {
           return (
             <div className="max-w-md mx-auto my-16 p-8 bg-white rounded-2xl border border-red-200 shadow-xl text-center space-y-4 animate-scaleUp">
               <div className="w-14 h-14 bg-red-100 text-red-700 rounded-2xl flex items-center justify-center mx-auto shadow-inner">
                 <AlertCircle className="w-7 h-7" />
               </div>
-              <h2 className="text-lg font-bold text-[#131b2e]">Operations Manager Access Only</h2>
+              <h2 className="text-lg font-bold text-[#131b2e]">Login Required — Operations Command</h2>
               <p className="text-xs text-[#707973] leading-relaxed">
-                This portal is strictly restricted to Operations Supervisors. Your current active role does not have authorization to view this workspace.
+                This portal is strictly restricted to verified Operations Supervisors. Valid supervisor authentication is required to access dispatch records and system administration.
               </p>
               <div className="pt-2 flex flex-col sm:flex-row items-center justify-center gap-2">
                 <button
@@ -72,9 +113,9 @@ const AppContent: React.FC = () => {
                 </button>
                 <button
                   onClick={() => setIsAuthModalOpen(true)}
-                  className="w-full sm:w-auto px-4 py-2.5 rounded-xl bg-[#003523] hover:bg-[#144d37] text-white text-xs font-bold transition-all shadow-xs"
+                  className="w-full sm:w-auto px-4 py-2.5 rounded-xl bg-[#003523] hover:bg-[#144d37] text-white text-xs font-bold transition-all shadow-xs cursor-pointer"
                 >
-                  Sign In with Operations Role
+                  Sign In to Operations
                 </button>
               </div>
             </div>
@@ -82,15 +123,24 @@ const AppContent: React.FC = () => {
         }
         return <AdminPortal />;
       case 'vendor':
+        // If logged in as another role, reject with 403 NotAuthorizedPage
+        if (authProfile && authProfile.role !== 'vendor') {
+          return (
+            <NotAuthorizedPage
+              requiredRoleName="Trade Partner (Vendor)"
+              portalName="Trade Partner Network"
+            />
+          );
+        }
         if (currentRole !== 'vendor') {
           return (
             <div className="max-w-md mx-auto my-16 p-8 bg-white rounded-2xl border border-amber-200 shadow-xl text-center space-y-4 animate-scaleUp">
               <div className="w-14 h-14 bg-amber-100 text-amber-700 rounded-2xl flex items-center justify-center mx-auto shadow-inner">
                 <AlertCircle className="w-7 h-7" />
               </div>
-              <h2 className="text-lg font-bold text-[#131b2e]">Vendor Partner Access Only</h2>
+              <h2 className="text-lg font-bold text-[#131b2e]">Login Required — Trade Partner Network</h2>
               <p className="text-xs text-[#707973] leading-relaxed">
-                This portal is strictly restricted to Verified Vendor Partners. Your current active role does not have authorization to view this workspace.
+                This portal is strictly restricted to verified Vendor Partners. Valid partner authentication is required to view assigned jobs and trade financial ledgers.
               </p>
               <div className="pt-2 flex flex-col sm:flex-row items-center justify-center gap-2">
                 <button
@@ -101,9 +151,9 @@ const AppContent: React.FC = () => {
                 </button>
                 <button
                   onClick={() => setIsAuthModalOpen(true)}
-                  className="w-full sm:w-auto px-4 py-2.5 rounded-xl bg-[#003523] hover:bg-[#144d37] text-white text-xs font-bold transition-all shadow-xs"
+                  className="w-full sm:w-auto px-4 py-2.5 rounded-xl bg-[#003523] hover:bg-[#144d37] text-white text-xs font-bold transition-all shadow-xs cursor-pointer"
                 >
-                  Sign In with Vendor Role
+                  Sign In as Partner
                 </button>
               </div>
             </div>
@@ -111,15 +161,28 @@ const AppContent: React.FC = () => {
         }
         return <VendorPortal />;
       case 'employee':
-        if (currentRole !== 'employee') {
+        // If logged in as another role, reject with 403 NotAuthorizedPage
+        if (
+          authProfile &&
+          authProfile.role !== 'technician' &&
+          authProfile.role !== 'employee'
+        ) {
+          return (
+            <NotAuthorizedPage
+              requiredRoleName="Field Technician"
+              portalName="Staff Technician Hub"
+            />
+          );
+        }
+        if (currentRole !== 'employee' && currentRole !== 'technician') {
           return (
             <div className="max-w-md mx-auto my-16 p-8 bg-white rounded-2xl border border-blue-200 shadow-xl text-center space-y-4 animate-scaleUp">
               <div className="w-14 h-14 bg-blue-100 text-blue-700 rounded-2xl flex items-center justify-center mx-auto shadow-inner">
                 <AlertCircle className="w-7 h-7" />
               </div>
-              <h2 className="text-lg font-bold text-[#131b2e]">Staff Technician Access Only</h2>
+              <h2 className="text-lg font-bold text-[#131b2e]">Login Required — Staff Technician Hub</h2>
               <p className="text-xs text-[#707973] leading-relaxed">
-                This portal is strictly restricted to Field Technicians. Your current active role does not have authorization to view this workspace.
+                This portal is strictly restricted to Field Technicians. Valid staff authentication is required to access assigned work orders and customer tickets.
               </p>
               <div className="pt-2 flex flex-col sm:flex-row items-center justify-center gap-2">
                 <button
@@ -130,9 +193,9 @@ const AppContent: React.FC = () => {
                 </button>
                 <button
                   onClick={() => setIsAuthModalOpen(true)}
-                  className="w-full sm:w-auto px-4 py-2.5 rounded-xl bg-[#003523] hover:bg-[#144d37] text-white text-xs font-bold transition-all shadow-xs"
+                  className="w-full sm:w-auto px-4 py-2.5 rounded-xl bg-[#003523] hover:bg-[#144d37] text-white text-xs font-bold transition-all shadow-xs cursor-pointer"
                 >
-                  Sign In with Technician Role
+                  Sign In as Technician
                 </button>
               </div>
             </div>
@@ -175,7 +238,7 @@ const AppContent: React.FC = () => {
       <Navbar />
 
       {/* Main Page Body */}
-      <main className="flex-1">
+      <main id="main-content" className="flex-1 pb-16 md:pb-0">
         {renderCurrentPage()}
       </main>
 
@@ -204,6 +267,11 @@ const AppContent: React.FC = () => {
 };
 
 export default function App() {
+  // Task 1: In a production build with missing Supabase config, show a clear "Service not configured" screen
+  if (!isSupabaseConfigured() && !import.meta.env.DEV) {
+    return <ServiceNotConfiguredScreen />;
+  }
+
   return (
     <AppProvider>
       <AppContent />

@@ -1,106 +1,65 @@
 import React from 'react';
 import { useApp } from '../../context/AppContext';
-import {
-  Home,
-  Grid,
-  ShoppingBag,
-  ClipboardList,
-  ShieldCheck,
-  HardHat
-} from 'lucide-react';
+import { Phone, MessageCircle, ArrowRight } from 'lucide-react';
 
+/**
+ * Mobile Sticky Bottom Bar:
+ * Provides the required high-conversion action bar on mobile viewports (<768px):
+ * [ Call | WhatsApp | Book Now ]
+ */
 export const BottomNav: React.FC = () => {
   const {
     currentPage,
     setCurrentPage,
-    setCurrentRole,
-    requests,
-    cartTotal,
-    setIsCartDrawerOpen,
-    currentUser,
     currentRole
   } = useApp();
 
-  const pendingRequests = requests.filter(
-    (r) => r.status === 'NEW' || r.status === 'UNDER REVIEW'
-  ).length;
-
+  // Hide sticky bottom bar on dedicated staff portals
   if (currentPage === 'admin' || currentPage === 'vendor' || currentPage === 'employee') {
     return null;
   }
 
+  const handleBookNow = () => {
+    setCurrentPage('services');
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  };
+
   return (
-    <nav className="md:hidden fixed bottom-0 left-0 right-0 z-40 bg-white/95 backdrop-blur-md border-t border-[#c0c9c2]/40 shadow-lg px-2 py-1 flex justify-around items-center">
-      <button
-        onClick={() => setCurrentPage('home')}
-        className={`flex flex-col items-center justify-center min-h-[46px] min-w-[54px] p-1 rounded-xl transition-all ${
-          currentPage === 'home'
-            ? 'text-[#003523] font-bold'
-            : 'text-[#404943] hover:text-[#003523]'
-        }`}
+    <aside
+      aria-label="Mobile quick action bar"
+      className="md:hidden fixed bottom-0 left-0 right-0 z-40 bg-white/98 backdrop-blur-md border-t border-gray-200/80 px-3 py-2 shadow-[0_-4px_16px_rgba(0,0,0,0.08)] flex items-center justify-between gap-2 safe-bottom"
+    >
+      {/* 1. Direct Click-to-Call */}
+      <a
+        href="tel:+918284018909"
+        className="flex-1 flex items-center justify-center space-x-1.5 py-2.5 px-2 rounded-xl border border-gray-200 bg-gray-50/80 text-[#0F3D2E] hover:bg-gray-100 active:scale-[0.98] transition-all text-xs font-semibold focus-visible:ring-2 focus-visible:ring-[#0F3D2E] focus-visible:outline-none min-h-[44px]"
+        aria-label="Call UrbanCare Support +91 8284018909"
       >
-        <Home className="w-5 h-5 mb-0.5" />
-        <span className="text-[10px]">Home</span>
-      </button>
+        <Phone className="w-4 h-4 text-[#0F3D2E] shrink-0" />
+        <span>Call</span>
+      </a>
 
-      <button
-        onClick={() => setCurrentPage('services')}
-        className={`flex flex-col items-center justify-center min-h-[46px] min-w-[54px] p-1 rounded-xl transition-all ${
-          currentPage === 'services'
-            ? 'text-[#003523] font-bold'
-            : 'text-[#404943] hover:text-[#003523]'
-        }`}
+      {/* 2. Direct Click-to-WhatsApp */}
+      <a
+        href="https://wa.me/918284018909"
+        target="_blank"
+        rel="noopener noreferrer"
+        className="flex-1 flex items-center justify-center space-x-1.5 py-2.5 px-2 rounded-xl border border-emerald-200 bg-emerald-50/80 text-emerald-800 hover:bg-emerald-100 active:scale-[0.98] transition-all text-xs font-semibold focus-visible:ring-2 focus-visible:ring-emerald-600 focus-visible:outline-none min-h-[44px]"
+        aria-label="Chat with UrbanCare on WhatsApp"
       >
-        <Grid className="w-5 h-5 mb-0.5" />
-        <span className="text-[10px]">Services</span>
-      </button>
+        <MessageCircle className="w-4 h-4 text-emerald-600 shrink-0" />
+        <span>WhatsApp</span>
+      </a>
 
+      {/* 3. Primary CTA: Book Now */}
       <button
-        onClick={() => setCurrentPage('projects')}
-        className={`flex flex-col items-center justify-center min-h-[46px] min-w-[54px] p-1 rounded-xl transition-all ${
-          currentPage === 'projects'
-            ? 'text-[#003523] font-bold'
-            : 'text-[#404943] hover:text-[#003523]'
-        }`}
+        onClick={handleBookNow}
+        className="flex-[1.3] flex items-center justify-center space-x-1.5 py-2.5 px-3 rounded-xl bg-[#F28C28] hover:bg-[#d9771e] active:scale-[0.98] text-white font-bold text-xs shadow-sm transition-all focus-visible:ring-2 focus-visible:ring-[#0F3D2E] focus-visible:outline-none min-h-[44px]"
+        aria-label="Book a Service Now"
       >
-        <HardHat className="w-5 h-5 mb-0.5" />
-        <span className="text-[10px]">Projects</span>
+        <span>Book Now</span>
+        <ArrowRight className="w-3.5 h-3.5 shrink-0" />
       </button>
-
-      {/* Direct Basket button with item count - visible strictly once logged in */}
-      {currentUser && currentRole === 'customer' && (
-        <button
-          onClick={() => setIsCartDrawerOpen(true)}
-          className="flex flex-col items-center justify-center min-h-[46px] min-w-[54px] p-1 rounded-xl text-[#003523] relative transition-all"
-        >
-          <div className="relative">
-            <ShoppingBag className="w-5 h-5 mb-0.5" />
-            {cartTotal.itemCount > 0 && (
-              <span className="absolute -top-1.5 -right-2 bg-[#fe932c] text-[#002114] text-[9px] font-bold w-4 h-4 rounded-full flex items-center justify-center shadow-xs">
-                {cartTotal.itemCount}
-              </span>
-            )}
-          </div>
-          <span className="text-[10px] font-bold">
-            {cartTotal.itemCount > 0 ? `₹${cartTotal.total}` : 'Basket'}
-          </span>
-        </button>
-      )}
-
-      <button
-        onClick={() => setCurrentPage('account')}
-        className={`flex flex-col items-center justify-center min-h-[46px] min-w-[54px] p-1 rounded-xl transition-all relative ${
-          currentPage === 'account'
-            ? 'text-[#003523] font-bold'
-            : 'text-[#404943] hover:text-[#003523]'
-        }`}
-      >
-        <ClipboardList className="w-5 h-5 mb-0.5" />
-        <span className="text-[10px]">Bookings</span>
-        {requests.length > 0 && (
-          <span className="absolute top-1 right-2 w-2 h-2 rounded-full bg-[#fe932c]" />
-        )}
-      </button>
-    </nav>
+    </aside>
   );
 };

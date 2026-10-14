@@ -41,6 +41,7 @@ export const EmployeePortal: React.FC = () => {
     setCurrentPage,
     currentEmployeeId,
     setCurrentEmployeeId,
+    authProfile,
     employees,
     requests,
     employeeNotifications,
@@ -53,7 +54,9 @@ export const EmployeePortal: React.FC = () => {
     updateEmployeeAvailability,
     loginStaff,
     logoutStaff,
-    showToast
+    showToast,
+    isLoadingData,
+    dataLoadError
   } = useApp();
 
   const [activeTab, setActiveTab] = useState<EmployeeTab>('today');
@@ -64,20 +67,25 @@ export const EmployeePortal: React.FC = () => {
 
   // Authentication State for Role Gate
   const [selectedEmployeeForLogin, setSelectedEmployeeForLogin] = useState<string>(
-    currentEmployeeId || 'emp-1'
+    currentEmployeeId || ''
   );
-  const [loginPassword, setLoginPassword] = useState<string>('TechPass@101');
+  const [loginPassword, setLoginPassword] = useState<string>('');
   const [showLoginPassword, setShowLoginPassword] = useState<boolean>(false);
 
-  // Currently authenticated employee
+  // Currently authenticated employee (matched by user_id or active ID)
   const currentEmployee = useMemo(() => {
-    return employees.find((e) => e.id === currentEmployeeId) || employees[0];
-  }, [employees, currentEmployeeId]);
+    return (
+      employees.find((e) => (authProfile?.id && e.user_id === authProfile.id) || e.id === currentEmployeeId) ||
+      employees[0] ||
+      null
+    );
+  }, [employees, currentEmployeeId, authProfile]);
 
   // STRICT REQUIREMENT: Employees can log in and see ONLY their assigned work
   const myAssignedRequests = useMemo(() => {
+    if (!currentEmployee) return [];
     return requests.filter((r) => r.assignedTo?.id === currentEmployee.id);
-  }, [requests, currentEmployee.id]);
+  }, [requests, currentEmployee]);
 
   // Sub-categories of work:
   // 1. Today's Jobs: Scheduled or assigned for today (not completed/cancelled)
@@ -127,8 +135,9 @@ export const EmployeePortal: React.FC = () => {
 
   // 5. Notifications for this employee
   const myNotifications = useMemo(() => {
+    if (!currentEmployee) return [];
     return employeeNotifications.filter((n) => n.employeeId === currentEmployee.id);
-  }, [employeeNotifications, currentEmployee.id]);
+  }, [employeeNotifications, currentEmployee]);
 
   const unreadNotificationsCount = useMemo(() => {
     return myNotifications.filter((n) => !n.read).length;
@@ -176,12 +185,33 @@ export const EmployeePortal: React.FC = () => {
           </div>
 
           <form onSubmit={handleEmployeeLogin} className="p-6 sm:p-8 space-y-5">
+            {dataLoadError && (
+              <div className="p-3 rounded-xl bg-red-50 border border-red-200 text-red-700 text-xs flex items-center space-x-2">
+                <AlertCircle className="w-4 h-4 shrink-0 text-red-600" />
+                <span>{dataLoadError}</span>
+              </div>
+            )}
+
             <div>
               <label className="block text-xs font-bold text-gray-700 uppercase tracking-wider mb-2">
                 Select Technician Profile
               </label>
               <div className="space-y-2">
-                {employees.map((emp) => (
+                {isLoadingData && employees.length === 0 ? (
+                  <div className="space-y-2">
+                    {[1, 2].map((i) => (
+                      <div key={i} className="p-4 rounded-xl border border-gray-200 animate-pulse space-y-2">
+                        <div className="h-4 bg-gray-200 rounded w-1/3"></div>
+                        <div className="h-3 bg-gray-200 rounded w-1/2"></div>
+                      </div>
+                    ))}
+                  </div>
+                ) : employees.length === 0 ? (
+                  <div className="p-4 rounded-xl border border-dashed border-gray-200 text-center text-xs text-gray-500">
+                    No technician profiles available.
+                  </div>
+                ) : (
+                  employees.map((emp) => (
                   <label
                     key={emp.id}
                     className={`flex items-center justify-between p-3 rounded-xl border text-xs cursor-pointer transition-all ${
@@ -197,7 +227,6 @@ export const EmployeePortal: React.FC = () => {
                         checked={selectedEmployeeForLogin === emp.id}
                         onChange={() => {
                           setSelectedEmployeeForLogin(emp.id);
-                          setLoginPassword(emp.password || 'TechPass@101');
                         }}
                         className="text-[#003523] focus:ring-[#003523]"
                       />
@@ -217,7 +246,7 @@ export const EmployeePortal: React.FC = () => {
                       {emp.rating} ★
                     </span>
                   </label>
-                ))}
+                )))}
               </div>
             </div>
 
@@ -226,9 +255,6 @@ export const EmployeePortal: React.FC = () => {
                 <label className="block text-xs font-bold text-gray-700 uppercase tracking-wider">
                   Technician Account Password *
                 </label>
-                <span className="text-[10px] text-emerald-800 font-mono font-bold bg-emerald-50 px-2 py-0.5 rounded border border-emerald-200">
-                  Demo: {employees.find((e) => e.id === selectedEmployeeForLogin)?.password || 'TechPass@101'}
-                </span>
               </div>
               <div className="relative">
                 <Lock className="w-4 h-4 text-gray-400 absolute left-3 top-3.5" />
@@ -238,7 +264,7 @@ export const EmployeePortal: React.FC = () => {
                   value={loginPassword}
                   onChange={(e) => setLoginPassword(e.target.value)}
                   className="w-full text-xs p-3 pl-9 pr-9 rounded-xl border border-gray-200 focus:outline-none focus:ring-2 focus:ring-[#003523] font-semibold"
-                  placeholder="Enter 8-letter password or 123456"
+                  placeholder="Enter technician password"
                 />
                 <button
                   type="button"
@@ -272,6 +298,42 @@ export const EmployeePortal: React.FC = () => {
               </button>
             </div>
           </form>
+        </div>
+      </div>
+    );
+  }
+
+  if (!currentEmployee) {
+    if (isLoadingData) {
+      return (
+        <div className="min-h-[85vh] bg-[#f8faf9] py-12 px-4 flex items-center justify-center">
+          <div className="max-w-md w-full bg-white rounded-3xl p-8 border border-gray-200 text-center space-y-4 animate-pulse">
+            <div className="w-12 h-12 bg-gray-200 rounded-2xl mx-auto"></div>
+            <div className="h-4 bg-gray-200 rounded w-1/2 mx-auto"></div>
+            <div className="h-3 bg-gray-200 rounded w-3/4 mx-auto"></div>
+          </div>
+        </div>
+      );
+    }
+    return (
+      <div className="min-h-[85vh] bg-[#f8faf9] py-12 px-4 flex items-center justify-center">
+        <div className="max-w-md w-full bg-white rounded-3xl p-8 border border-gray-200 text-center space-y-4">
+          <div className="w-12 h-12 rounded-2xl bg-amber-100 text-amber-700 flex items-center justify-center mx-auto">
+            <AlertCircle className="w-6 h-6" />
+          </div>
+          <h3 className="text-lg font-bold text-gray-900">Technician Record Not Found</h3>
+          <p className="text-xs text-gray-600">
+            No technician profile is linked to your current authenticated account.
+          </p>
+          <button
+            onClick={() => {
+              logoutStaff();
+              setCurrentPage('home');
+            }}
+            className="px-4 py-2 bg-[#003523] text-white rounded-xl text-xs font-bold"
+          >
+            Return to Home
+          </button>
         </div>
       </div>
     );
@@ -311,7 +373,7 @@ export const EmployeePortal: React.FC = () => {
           </div>
 
           {/* Quick Availability & Switcher */}
-          <div className="flex items-center space-x-3">
+          <div className="flex items-center flex-wrap gap-2">
             {/* Availability selector */}
             <div className="flex items-center space-x-1.5 bg-white/10 px-3 py-1.5 rounded-xl border border-white/15 text-xs">
               <span className="text-gray-300 text-[11px] hidden sm:inline">Status:</span>
@@ -980,7 +1042,7 @@ export const EmployeePortal: React.FC = () => {
         isOpen={!!selectedJobForComplete}
         onClose={() => setSelectedJobForComplete(null)}
         request={selectedJobForComplete}
-        onConfirmComplete={(workNotes, photos, materialInfo, partsUsed, paymentMode) => {
+        onConfirmComplete={(workNotes, photos, materialInfo, partsUsed, paymentMode, customerOtp) => {
           if (selectedJobForComplete) {
             employeeCompleteWork(
               selectedJobForComplete.id,
@@ -988,7 +1050,8 @@ export const EmployeePortal: React.FC = () => {
               photos,
               materialInfo,
               partsUsed,
-              paymentMode
+              paymentMode,
+              customerOtp
             );
           }
         }}

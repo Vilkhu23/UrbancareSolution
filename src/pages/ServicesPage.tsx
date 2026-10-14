@@ -29,7 +29,9 @@ export const ServicesPage: React.FC = () => {
     updateCartQuantity,
     setSelectedDetailServiceId,
     setIsCustomTaskModalOpen,
-    currentLocality
+    currentLocality,
+    isLoadingData,
+    dataLoadError
   } = useApp();
 
   const [activeCategory, setActiveCategory] = useState<string>('AC & Appliances');
@@ -250,6 +252,15 @@ export const ServicesPage: React.FC = () => {
         </div>
       )}
 
+      {dataLoadError && (
+        <div className="bg-red-50 border border-red-200 p-4 rounded-xl text-xs text-red-700 flex items-center justify-between">
+          <div className="flex items-center space-x-2">
+            <Info className="w-4 h-4 text-red-600 shrink-0" />
+            <span>Failed to load live service rates from cloud database: {dataLoadError}</span>
+          </div>
+        </div>
+      )}
+
       {/* Services Grid (Pricing Cards) */}
       <div className="space-y-3 pt-2">
         <div className="flex items-center justify-between">
@@ -261,8 +272,31 @@ export const ServicesPage: React.FC = () => {
           </span>
         </div>
 
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-          {filteredServices.map((service) => {
+        {isLoadingData && services.length === 0 ? (
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+            {[1, 2, 3, 4, 5, 6].map((n) => (
+              <div
+                key={n}
+                className="bg-white rounded-2xl border border-[#c0c9c2]/40 p-5 shadow-xs animate-pulse space-y-3"
+              >
+                <div className="h-4 bg-[#e7ede8] rounded w-1/3"></div>
+                <div className="h-5 bg-[#e7ede8] rounded w-2/3"></div>
+                <div className="h-3 bg-[#e7ede8] rounded w-full"></div>
+                <div className="h-3 bg-[#e7ede8] rounded w-4/5"></div>
+                <div className="pt-3 border-t border-[#c0c9c2]/30 flex justify-between items-center">
+                  <div className="h-6 bg-[#e7ede8] rounded w-16"></div>
+                  <div className="h-8 bg-[#e7ede8] rounded w-20"></div>
+                </div>
+              </div>
+            ))}
+          </div>
+        ) : filteredServices.length === 0 ? (
+          <div className="bg-white rounded-2xl border border-[#c0c9c2]/40 p-8 text-center text-xs text-[#707973]">
+            No services found matching the criteria.
+          </div>
+        ) : (
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+            {filteredServices.map((service) => {
             const pricing = formatServicePricing(service);
             const inCart = cart.find((c) => c.serviceId === service.id);
             const count = inCart ? inCart.quantity : 0;
@@ -419,7 +453,8 @@ export const ServicesPage: React.FC = () => {
               </div>
             );
           })}
-        </div>
+          </div>
+        )}
       </div>
     </div>
   );
