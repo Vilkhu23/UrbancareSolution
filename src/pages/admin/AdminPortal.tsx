@@ -214,7 +214,7 @@ export const AdminPortal: React.FC = () => {
   const activeEmployeesCount = employees.filter((e) => e.status === 'ACTIVE').length;
 
   const totalRevenue = requests.reduce((acc, r) => acc + r.total, 0);
-  const totalReconciledPayments = payments.reduce((acc, p) => acc + p.amount, 0);
+  const totalReconciledPayments = payments.reduce((acc, p) => acc + (Number(p?.amount) || 0), 0);
 
   // Filtered requests list
   const filteredRequests = useMemo(() => {
@@ -2405,7 +2405,7 @@ export const AdminPortal: React.FC = () => {
                   <Building2 className="w-3.5 h-3.5" />
                   <span>
                     Vendor Onboarding Fees (
-                    {payments.filter((p) => p.paymentType === 'VENDOR_ONBOARDING' || p.requestId.startsWith('ONBOARD-')).length}
+                    {payments.filter((p) => p.paymentType === 'VENDOR_ONBOARDING' || (typeof p.requestId === 'string' && p.requestId.startsWith('ONBOARD-'))).length}
                     )
                   </span>
                 </button>
@@ -2419,7 +2419,7 @@ export const AdminPortal: React.FC = () => {
                   }`}
                 >
                   Service Bookings (
-                  {payments.filter((p) => p.paymentType !== 'VENDOR_ONBOARDING' && !p.requestId.startsWith('ONBOARD-')).length}
+                  {payments.filter((p) => p.paymentType !== 'VENDOR_ONBOARDING' && (!p.requestId || !p.requestId.startsWith('ONBOARD-'))).length}
                   )
                 </button>
               </div>
@@ -2441,17 +2441,21 @@ export const AdminPortal: React.FC = () => {
                   <tbody className="divide-y divide-[#c0c9c2]/30">
                     {payments
                       .filter((p) => {
-                        const isVendorOnboarding = p.paymentType === 'VENDOR_ONBOARDING' || p.requestId.startsWith('ONBOARD-');
+                        const isVendorOnboarding =
+                          p.paymentType === 'VENDOR_ONBOARDING' ||
+                          (typeof p.requestId === 'string' && p.requestId.startsWith('ONBOARD-'));
                         if (paymentLedgerFilter === 'ORDERS') return !isVendorOnboarding;
                         if (paymentLedgerFilter === 'ONBOARDING') return isVendorOnboarding;
                         return true;
                       })
                       .map((pay) => {
-                        const isOnboarding = pay.paymentType === 'VENDOR_ONBOARDING' || pay.requestId.startsWith('ONBOARD-');
+                        const isOnboarding =
+                          pay.paymentType === 'VENDOR_ONBOARDING' ||
+                          (typeof pay.requestId === 'string' && pay.requestId.startsWith('ONBOARD-'));
                         return (
                           <tr key={pay.id} className={isOnboarding ? 'bg-purple-50/30 hover:bg-purple-50/60' : 'hover:bg-[#faf8ff]'}>
                             <td className="p-3">
-                              <span className="font-mono font-bold text-[#131b2e] block">{pay.transactionRef}</span>
+                              <span className="font-mono font-bold text-[#131b2e] block">{pay.transactionRef || pay.id}</span>
                               {pay.notes && (
                                 <span className="text-[10px] text-gray-500 italic block truncate max-w-[140px]" title={pay.notes}>
                                   {pay.notes}
@@ -2459,7 +2463,9 @@ export const AdminPortal: React.FC = () => {
                               )}
                             </td>
                             <td className="p-3">
-                              <span className="font-mono font-bold text-[#003523] block">#{pay.requestId}</span>
+                              <span className="font-mono font-bold text-[#003523] block">
+                                {pay.requestId ? `#${pay.requestId}` : '—'}
+                              </span>
                               {isOnboarding ? (
                                 <span className="text-[9px] font-bold px-1.5 py-0.2 rounded bg-purple-100 text-purple-800 border border-purple-200 uppercase">
                                   Vendor Onboarding
@@ -2468,8 +2474,10 @@ export const AdminPortal: React.FC = () => {
                                 <span className="text-[9px] text-gray-500">Service Booking</span>
                               )}
                             </td>
-                            <td className="p-3 font-extrabold text-[#131b2e]">{pay.customerName}</td>
-                            <td className="p-3 font-mono font-black text-sm text-[#003523]">₹{pay.amount}</td>
+                            <td className="p-3 font-extrabold text-[#131b2e]">{pay.customerName || 'N/A'}</td>
+                            <td className="p-3 font-mono font-black text-sm text-[#003523]">
+                              ₹{Number(pay.amount || 0).toLocaleString('en-IN')}
+                            </td>
                             <td className="p-3">
                               <span className="font-bold text-[#404943] flex items-center space-x-1">
                                 {pay.mode === 'CASH' && <Wallet className="w-3 h-3 text-emerald-700" />}
@@ -2477,11 +2485,11 @@ export const AdminPortal: React.FC = () => {
                                 {(pay.mode === 'ONLINE' || pay.mode === 'UPI' || pay.mode === 'ONLINE_CARD' || pay.mode === 'NET_BANKING') && (
                                   <Smartphone className="w-3 h-3 text-blue-700" />
                                 )}
-                                <span>{pay.mode}</span>
+                                <span>{pay.mode || 'CASH'}</span>
                               </span>
                             </td>
-                            <td className="p-3 text-[#707973]">{pay.collectedBy}</td>
-                            <td className="p-3 font-mono text-[11px] text-[#707973]">{pay.date}</td>
+                            <td className="p-3 text-[#707973]">{pay.collectedBy || 'Staff'}</td>
+                            <td className="p-3 font-mono text-[11px] text-[#707973]">{pay.date || '—'}</td>
                             <td className="p-3">
                               <span
                                 className={`px-2 py-0.5 rounded text-[10px] font-bold ${
@@ -2492,12 +2500,34 @@ export const AdminPortal: React.FC = () => {
                                     : 'bg-red-100 text-red-800'
                                 }`}
                               >
-                                {pay.status}
+                                {pay.status || 'SUCCESS'}
                               </span>
                             </td>
                           </tr>
                         );
                       })}
+                    {payments.filter((p) => {
+                      const isVendorOnboarding =
+                        p.paymentType === 'VENDOR_ONBOARDING' ||
+                        (typeof p.requestId === 'string' && p.requestId.startsWith('ONBOARD-'));
+                      if (paymentLedgerFilter === 'ORDERS') return !isVendorOnboarding;
+                      if (paymentLedgerFilter === 'ONBOARDING') return isVendorOnboarding;
+                      return true;
+                    }).length === 0 && (
+                      <tr>
+                        <td colSpan={8} className="p-8 text-center text-gray-500">
+                          <CreditCard className="w-8 h-8 text-gray-300 mx-auto mb-2" />
+                          <p className="font-bold text-sm">No payment records found</p>
+                          <p className="text-xs text-gray-400 mt-0.5">
+                            {paymentLedgerFilter === 'ONBOARDING'
+                              ? 'No vendor onboarding fee settlements recorded yet.'
+                              : paymentLedgerFilter === 'ORDERS'
+                              ? 'No service booking customer payments recorded yet.'
+                              : 'Transactions and payment settlements will appear here.'}
+                          </p>
+                        </td>
+                      </tr>
+                    )}
                   </tbody>
                 </table>
               </div>

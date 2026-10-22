@@ -291,6 +291,67 @@ export const mapServiceItemFromDb = (row: any, categories?: ServiceCategory[]): 
   };
 };
 
+/**
+ * Maps PostgreSQL payments table row to Application PaymentRecord domain model.
+ * Handles snake_case to camelCase conversion, safe casting of numeric amounts,
+ * payment method normalization, and date formatting.
+ */
+export const mapPaymentFromDb = (row: any): PaymentRecord => {
+  const reqId = row.request_id || row.requestId || '';
+  const isVendorOnboarding =
+    row.payment_type === 'VENDOR_ONBOARDING' ||
+    (typeof reqId === 'string' && reqId.startsWith('ONBOARD-'));
+
+  // Normalize status
+  let status: 'SUCCESS' | 'PENDING' | 'REFUNDED' | 'DISPUTED' = 'SUCCESS';
+  const rawStatus = (row.status || '').toUpperCase();
+  if (rawStatus === 'PENDING') status = 'PENDING';
+  else if (rawStatus === 'REFUNDED') status = 'REFUNDED';
+  else if (rawStatus === 'DISPUTED' || rawStatus === 'FAILED') status = 'DISPUTED';
+  else status = 'SUCCESS';
+
+  // Normalize payment mode/channel
+  let mode: 'UPI' | 'CASH' | 'ONLINE_CARD' | 'NET_BANKING' | 'CHEQUE' | 'ONLINE' = 'CASH';
+  const rawMethod = (row.method || row.mode || 'CASH').toUpperCase();
+  if (rawMethod === 'UPI') mode = 'UPI';
+  else if (rawMethod === 'CHEQUE') mode = 'CHEQUE';
+  else if (rawMethod === 'ONLINE_CARD') mode = 'ONLINE_CARD';
+  else if (rawMethod === 'NET_BANKING') mode = 'NET_BANKING';
+  else if (rawMethod === 'ONLINE') mode = 'ONLINE';
+  else mode = 'CASH';
+
+  // Format timestamp/created_at to display date string
+  let formattedDate = 'Recent';
+  const rawDate = row.date || row.timestamp || row.created_at;
+  if (rawDate) {
+    try {
+      const d = new Date(rawDate);
+      if (!isNaN(d.getTime())) {
+        formattedDate = d.toLocaleString('en-IN', { dateStyle: 'short', timeStyle: 'short' });
+      } else {
+        formattedDate = String(rawDate);
+      }
+    } catch {
+      formattedDate = String(rawDate);
+    }
+  }
+
+  return {
+    id: row.id || `pay-${Date.now()}`,
+    user_id: row.user_id || undefined,
+    requestId: reqId,
+    customerName: row.customer_name || row.customerName || (isVendorOnboarding ? 'Vendor Partner' : 'Customer'),
+    amount: Number(row.amount) || 0,
+    mode,
+    status,
+    transactionRef: row.reference_id || row.transactionRef || row.transaction_ref || `TXN-${row.id || Date.now()}`,
+    collectedBy: row.collected_by || row.collectedBy || (mode === 'CASH' ? 'Field Staff / Partner' : 'Digital Channel'),
+    date: formattedDate,
+    paymentType: isVendorOnboarding ? 'VENDOR_ONBOARDING' : 'SERVICE_BOOKING',
+    notes: row.notes || undefined
+  };
+};
+
 // ==============================================================================
 // 2. SUPABASE ASYNC CRUD METHODS (Role-Based & Public Loaders)
 // ==============================================================================
@@ -486,7 +547,38 @@ export const loadAllDataFromSupabase = async () => {
         serviceRequestId: row.request_id || undefined
       })) : null,
       complaints: complaintsRes.data || null,
-      payments: paymentsRes.data || null,
+      payments: (() => {
+        const mappedList: PaymentRecord[] = paymentsRes.data && paymentsRes.data.length > 0
+          ? paymentsRes.data.map(mapPaymentFromDb)
+          : [];
+        const existingReqIds = new Set(mappedList.map((p) => p.requestId));
+
+        if (vendorsRes.data && vendorsRes.data.length > 0) {
+          for (const vndRow of vendorsRes.data) {
+            const obPayment = vndRow.onboarding_payment || vndRow.plan?.onboardingPayment;
+            const reqKey = `ONBOARD-${vndRow.id}`;
+            if (obPayment && obPayment.amount && !existingReqIds.has(reqKey)) {
+              const obMode = obPayment.method === 'CHEQUE' ? 'CHEQUE' : obPayment.method === 'CASH' ? 'CASH' : 'ONLINE';
+              const obStatus = obPayment.chequeClearingStatus === 'PENDING_CLEARANCE' ? 'PENDING' : 'SUCCESS';
+              mappedList.push({
+                id: `pay-vnd-${vndRow.id}`,
+                requestId: reqKey,
+                customerName: `Vendor: ${vndRow.business_name} (${vndRow.owner_name})`,
+                amount: Number(obPayment.amount) || 0,
+                mode: obMode,
+                status: obStatus,
+                transactionRef: obPayment.transactionRef || `VND-OB-${vndRow.id}`,
+                collectedBy: obPayment.collectedBy || 'Operations Lead',
+                date: obPayment.paidAt || (vndRow.created_at ? new Date(vndRow.created_at).toISOString().split('T')[0] : 'Recent'),
+                paymentType: 'VENDOR_ONBOARDING',
+                notes: obPayment.notes || `Onboarding fee for ${vndRow.plan?.name || 'Partner Plan'}`
+              });
+              existingReqIds.add(reqKey);
+            }
+          }
+        }
+        return mappedList;
+      })(),
       opsSettings: mappedOpsSettings
     };
   } catch (error) {

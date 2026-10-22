@@ -1685,7 +1685,13 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       requestId: targetRequestId
     };
 
-    if (isSupabaseConfigured() && targetRequestId && targetRequestId !== 'PB-DIRECT' && targetRequestId !== 'PB-MANUAL') {
+    if (
+      isSupabaseConfigured() &&
+      targetRequestId &&
+      targetRequestId !== 'PB-DIRECT' &&
+      targetRequestId !== 'PB-MANUAL' &&
+      !targetRequestId.startsWith('ONBOARD-')
+    ) {
       const dbMethod: 'CASH' | 'UPI' | 'ONLINE' =
         newRecord.mode === 'CASH' ? 'CASH' :
         newRecord.mode === 'ONLINE_CARD' || newRecord.mode === 'NET_BANKING' ? 'ONLINE' : 'UPI';
