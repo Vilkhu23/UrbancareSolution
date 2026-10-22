@@ -127,6 +127,87 @@ File: [`supabase/migrations/20261013000009_unique_phone.sql`](supabase/migration
    - Enables verified administrators to release a customer's phone number (`phone = ''`, `phone_normalized = NULL`, `phone_verified = false`) with a mandatory audit reason.
    - Automatically writes an immutable audit record to `public.audit_logs` (`action = 'RELEASE_PHONE'`).
 
+### Step 10: Explicit Grants & Future-Proof Privilege Hardening
+File: [`supabase/migrations/20261013000010_explicit_grants.sql`](supabase/migrations/20261013000010_explicit_grants.sql)
+
+**What this executes**:
+1. **Supabase October 30 Breaking Change Defense**: Establishes explicit Data API grants on all 15 public tables, ensuring that fresh production databases, local `supabase db reset`, and preview branches never fail with PostgREST permission denied (42501).
+2. **RLS Verification**: Runs `ENABLE ROW LEVEL SECURITY` on every public table to ensure zero unprotected surfaces.
+3. **Least-Privilege Matrix**:
+   - **`anon`**: Strict `SELECT` only on public catalog tables (`services`, `service_categories`, `ops_settings`). Zero access to business tables.
+   - **`authenticated`**: Minimal operational access (`SELECT, INSERT, UPDATE` on bookings, customer records, complaints; `SELECT` on `service_request_secrets` and `payments`). Strips `DELETE` on core records and strips `TRUNCATE, REFERENCES, TRIGGER` globally.
+   - **`service_role`**: Explicit `ALL` on all tables, sequences, and routines.
+4. **Function Execution Hardening**: Revokes `EXECUTE` on all public routines from `PUBLIC`, `anon`, and `authenticated`, then selectively grants execute only on designated RPCs (`check_phone_available` to anon/authenticated; operational RPCs to authenticated).
+5. **Closed Default Privileges (`ALTER DEFAULT PRIVILEGES`)**: Sets default privileges in `public` to revoke all access from `anon` and `authenticated` on future tables, sequences, and functions.
+
+### Step 11: Employee Email & Staff Provisioning Grants
+File: [`supabase/migrations/20261013000011_add_employee_email_and_staff_provisioning_grants.sql`](supabase/migrations/20261013000011_add_employee_email_and_staff_provisioning_grants.sql)
+
+**What this executes**:
+1. Adds `email TEXT` column and unique index to `public.employees` so technician accounts can be reliably queried and linked by email address.
+2. Reaffirms explicit Data API grants (`SELECT`, `INSERT`, `UPDATE`, `DELETE`) on `employees` and `vendors` for `authenticated` roles.
+
+### Step 12: Trim Staff Grants (Block Client Deletion)
+File: [`supabase/migrations/20261013000012_trim_staff_grants.sql`](supabase/migrations/20261013000012_trim_staff_grants.sql)
+
+**What this executes**:
+1. Revokes `DELETE` on `public.employees` and `public.vendors` from `authenticated`. Staff deletion must be performed by soft-deactivating records (`status = 'INACTIVE'`) or through administrative database operations.
+
+### Step 13: Staff Phone Uniqueness & Self-Collision Defense
+File: [`supabase/migrations/20261013000013_fix_staff_phone.sql`](supabase/migrations/20261013000013_fix_staff_phone.sql)
+
+**What this executes**:
+1. Normalizes phone numbers during profile insert/update and ensures self-updates (`id = NEW.id`) do not trigger false-positive duplicate errors.
+2. Handles metadata phone assignment gracefully during staff provisioning.
+
+### Step 14: Customer Completion OTP Access & Self-Healing
+File: [`supabase/migrations/20261013000014_fix_customer_otp_access.sql`](supabase/migrations/20261013000014_fix_customer_otp_access.sql)
+
+**What this executes**:
+1. Updates `service_request_secrets` RLS policy to allow authenticated residents to read their completion OTP by matching either `user_id` or normalized `customer_phone`.
+2. Creates `get_customer_job_otp(p_request_id)` RPC function that securely returns the customer OTP while blocking technicians and vendors from querying it remotely.
+3. Automatically self-heals and generates missing secrets for pre-existing bookings (e.g. `PB-5295`, `PB-8699`).
+4. Links unlinked `service_requests.user_id` and `service_request_secrets.user_id` to profiles matching the customer phone number.
+
+---
+
+## 🔒 Mandatory Rule for Every Future Migration
+
+**Any `CREATE TABLE` or `CREATE FUNCTION` in `public` must, in the same migration file, enable RLS and include explicit `GRANT` statements.**
+
+Because default privileges are closed, any new table created without explicit grants will be unreachable via the Supabase Data API (`supabase-js`).
+
+### Template for Future Table Migrations:
+```sql
+-- 1. Create table
+CREATE TABLE public.your_new_table (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id UUID REFERENCES public.profiles(id) ON DELETE CASCADE,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+-- 2. Enable RLS immediately
+ALTER TABLE public.your_new_table ENABLE ROW LEVEL SECURITY;
+
+-- 3. Define RLS policies
+CREATE POLICY "Users access own rows"
+ON public.your_new_table
+FOR ALL
+TO authenticated
+USING (user_id = auth.uid())
+WITH CHECK (user_id = auth.uid());
+
+-- 4. Explicit Data API Grants
+-- If unauthenticated public visitors need read access:
+-- GRANT SELECT ON public.your_new_table TO anon;
+
+-- Authenticated application users (access governed by RLS):
+GRANT SELECT, INSERT, UPDATE, DELETE ON public.your_new_table TO authenticated;
+
+-- Service role (admin scripts, edge functions, migrations):
+GRANT ALL ON public.your_new_table TO service_role;
+```
+
 ---
 
 ## 2. Bootstrapping Your First Administrator
@@ -295,3 +376,33 @@ When activating phone OTP in the future:
    ```
 3. Deploy the SMS hook in [`supabase/functions/sms-hook/index.ts`](supabase/functions/sms-hook/index.ts) or configure custom SMS provider in Supabase Dashboard (**Authentication** -> **Providers** -> **Phone**).
 4. The frontend OTP adapter at [`src/lib/otp.ts`](src/lib/otp.ts) will automatically enable the OTP dispatch workflow once `VITE_OTP_ENABLED="true"`.
+
+---
+
+## 9. Database Seeding: Production Catalog vs Demo Staging
+
+The database seeds are split into two files to protect production environments from fictitious records, mock users, and orphaned dropdown entries:
+
+### 1. Production Seed: [`supabase/seed.sql`](supabase/seed.sql)
+- **Target**: Production, Staging, and Clean Test environments.
+- **Contents**: Strictly system configuration and service definitions only:
+  - `public.ops_settings`: System operating thresholds, emergency hours, platform fee %, SLA response minutes.
+  - `public.service_categories`: Standard category taxonomy (`cat-elec`, `cat-plumb`, `cat-hvac`, `cat-clean`, `cat-cctv`).
+  - `public.services`: Real active service catalog with pricing and descriptions.
+- **Zero Mock Data**: Contains **NO** fake employees, **NO** fake vendors, **NO** fake customers, and **NO** fake bookings. Safe to run against any new production deployment.
+
+```bash
+# Applying to a new production database via Supabase CLI or SQL Editor:
+# Run supabase/seed.sql in the Supabase SQL Editor
+```
+
+### 2. Demo Staging Seed: [`supabase/seed_demo.sql`](supabase/seed_demo.sql)
+- **Target**: **TEST PROJECTS ONLY — NEVER RUN IN PRODUCTION**
+- **Contents**: Fictitious mock entities for offline testing and UI evaluation:
+  - Demo employees (`emp-1` to `emp-4`) without linked login credentials.
+  - Demo vendors (`vnd-1` to `vnd-4`) without linked login credentials.
+  - Demo customers (`cust-1` to `cust-3`) without auth profiles.
+  - Demo requests (`PB-REQ-101` to `PB-REQ-103`).
+  - Demo opportunity ledger entries (`led-1`, `led-2`) and sample payments.
+- **Warning**: Never run this file in an environment intended for live customer traffic, as unlinked demo staff and vendors will pollute dispatcher dropdowns and booking lists.
+

@@ -12,7 +12,8 @@ import {
   HomeProjectRequest,
   CustomerReview,
   ServiceItem,
-  PriceType
+  PriceType,
+  VendorOnboardingPayment
 } from '../types';
 import { LOCALITIES } from '../data/initialData';
 
@@ -74,6 +75,7 @@ export const mapEmployeeFromDb = (row: any): Employee => ({
   completedJobs: row.completed_jobs || 0,
   rating: Number(row.rating) || 4.9,
   joinedDate: row.created_at ? new Date(row.created_at).toISOString().split('T')[0] : '2025-01-15',
+  email: row.email || undefined,
   password: row.password || undefined
 });
 
@@ -82,6 +84,7 @@ export const mapEmployeeToDb = (emp: Employee) => ({
   user_id: emp.user_id || null,
   employee_code: emp.employeeCode || emp.id,
   name: emp.name,
+  email: emp.email || null,
   mobile: emp.mobile,
   role: emp.role || 'Staff Technician',
   status: emp.status === 'INACTIVE' ? 'ON_LEAVE' : 'ACTIVE',
@@ -93,23 +96,8 @@ export const mapEmployeeToDb = (emp: Employee) => ({
   password: emp.password || null
 });
 
-export const mapVendorFromDb = (row: any): Vendor => ({
-  id: row.id,
-  user_id: row.user_id || undefined,
-  businessName: row.business_name,
-  ownerName: row.owner_name,
-  mobile: row.mobile,
-  email: row.email || '',
-  status: row.status || 'ACTIVE',
-  categories: Array.isArray(row.categories) ? row.categories : [],
-  serviceAreas: Array.isArray(row.service_areas) ? row.service_areas : [],
-  experienceYears: row.experience_years || 5,
-  documentsVerified: row.status === 'ACTIVE',
-  activeJobs: 0,
-  completedJobs: 0,
-  rating: Number(row.rating) || 4.8,
-  createdAt: row.created_at || new Date().toISOString(),
-  plan: row.plan || {
+export const mapVendorFromDb = (row: any): Vendor => {
+  const planData = row.plan || {
     name: 'Standard Trade Plan',
     price: 1499,
     totalOpportunities: 7,
@@ -117,9 +105,30 @@ export const mapVendorFromDb = (row: any): Vendor => ({
     remainingOpportunities: 7,
     validityDays: 30,
     expiryDate: new Date(Date.now() + 30 * 86400000).toISOString().split('T')[0]
-  },
-  password: row.password || undefined
-});
+  };
+  const onboardingPayment = row.onboarding_payment || planData?.onboardingPayment || undefined;
+
+  return {
+    id: row.id,
+    user_id: row.user_id || undefined,
+    businessName: row.business_name,
+    ownerName: row.owner_name,
+    mobile: row.mobile,
+    email: row.email || '',
+    status: row.status || 'ACTIVE',
+    categories: Array.isArray(row.categories) ? row.categories : [],
+    serviceAreas: Array.isArray(row.service_areas) ? row.service_areas : [],
+    experienceYears: row.experience_years || 5,
+    documentsVerified: row.status === 'ACTIVE',
+    activeJobs: 0,
+    completedJobs: 0,
+    rating: Number(row.rating) || 4.8,
+    createdAt: row.created_at || new Date().toISOString(),
+    plan: planData,
+    onboardingPayment,
+    password: row.password || undefined
+  };
+};
 
 export const mapVendorToDb = (vnd: Vendor) => ({
   id: vnd.id,
@@ -133,12 +142,31 @@ export const mapVendorToDb = (vnd: Vendor) => ({
   service_areas: vnd.serviceAreas,
   experience_years: vnd.experienceYears,
   rating: vnd.rating,
-  plan: vnd.plan,
+  plan: {
+    ...vnd.plan,
+    onboardingPayment: vnd.onboardingPayment || vnd.plan.onboardingPayment
+  },
   password: vnd.password || null
 });
 
 export const mapServiceRequestFromDb = (row: any): ServiceRequest => {
   const now = new Date().toLocaleString('en-IN', { dateStyle: 'short', timeStyle: 'short' });
+
+  let parsedRating: number | undefined = undefined;
+  let parsedFeedback: string | undefined = undefined;
+  if (row.completion_notes && typeof row.completion_notes === 'string') {
+    const match = row.completion_notes.match(/\[CUSTOMER_REVIEW\]:\s*(\{.*\})/);
+    if (match && match[1]) {
+      try {
+        const parsed = JSON.parse(match[1]);
+        if (typeof parsed.rating === 'number') parsedRating = parsed.rating;
+        if (typeof parsed.feedback === 'string') parsedFeedback = parsed.feedback;
+      } catch {
+        // ignore JSON parse error
+      }
+    }
+  }
+
   return {
     id: row.id,
     user_id: row.user_id || undefined,
@@ -164,6 +192,8 @@ export const mapServiceRequestFromDb = (row: any): ServiceRequest => {
     completedAt: row.work_completed_at || undefined,
     problemPhotos: Array.isArray(row.before_work_photos) ? row.before_work_photos : undefined,
     completionPhotos: Array.isArray(row.completion_photos) ? row.completion_photos : undefined,
+    customerRating: parsedRating,
+    customerFeedback: parsedFeedback,
     statusHistory: [
       {
         status: row.status,
@@ -178,35 +208,47 @@ export const mapServiceRequestFromDb = (row: any): ServiceRequest => {
   };
 };
 
-export const mapServiceRequestToDb = (req: ServiceRequest) => ({
-  id: req.id,
-  user_id: req.user_id || null,
-  customer_name: req.customerName,
-  customer_phone: req.customerPhone,
-  customer_address: req.address,
-  locality: req.locality,
-  items: req.items,
-  status: req.status,
-  preferred_date: req.preferredDate,
-  preferred_slot: req.preferredTimeSlot,
-  total: req.total,
-  subtotal: req.subtotal,
-  locality_adjustment: 0,
-  tax: req.taxAmount || 0,
-  payment_status: req.paymentStatus === 'PAID' ? 'PAID' : 'PENDING',
-  payment_method: req.paymentMode || req.paymentCollectedMode || 'CASH',
-  assigned_to: req.assignedTo || null,
-  technician_notes: req.notes || req.materialInfo || null,
-  vendor_scheduled_time: req.confirmedScheduleSlot || null,
-  vendor_arrival_status: req.vendorArrivalStatus === 'ARRIVED' ? 'ARRIVED' : 'PENDING',
-  work_started_at: req.workStartedAt ? new Date().toISOString() : null,
-  work_completed_at: req.completedAt ? new Date().toISOString() : null,
-  before_work_photos: req.problemPhotos || [],
-  completion_photos: req.completionPhotos || [],
-  completion_notes: req.materialInfo || null,
-  completion_code: null,
-  customer_otp: null
-});
+export const mapServiceRequestToDb = (req: ServiceRequest) => {
+  let completionNotes = req.materialInfo || '';
+  if (req.customerRating) {
+    const payload = JSON.stringify({ rating: req.customerRating, feedback: req.customerFeedback || '' });
+    if (!completionNotes.includes('[CUSTOMER_REVIEW]:')) {
+      completionNotes = completionNotes ? `${completionNotes}\n[CUSTOMER_REVIEW]: ${payload}` : `[CUSTOMER_REVIEW]: ${payload}`;
+    } else {
+      completionNotes = completionNotes.replace(/\[CUSTOMER_REVIEW\]:\s*\{.*\}/, `[CUSTOMER_REVIEW]: ${payload}`);
+    }
+  }
+
+  return {
+    id: req.id,
+    user_id: req.user_id || null,
+    customer_name: req.customerName,
+    customer_phone: req.customerPhone,
+    customer_address: req.address,
+    locality: req.locality,
+    items: req.items,
+    status: req.status,
+    preferred_date: req.preferredDate,
+    preferred_slot: req.preferredTimeSlot,
+    total: req.total,
+    subtotal: req.subtotal,
+    locality_adjustment: 0,
+    tax: req.taxAmount || 0,
+    payment_status: req.paymentStatus === 'PAID' ? 'PAID' : 'PENDING',
+    payment_method: req.paymentMode || req.paymentCollectedMode || 'CASH',
+    assigned_to: req.assignedTo || null,
+    technician_notes: req.notes || req.materialInfo || null,
+    vendor_scheduled_time: req.confirmedScheduleSlot || null,
+    vendor_arrival_status: req.vendorArrivalStatus === 'ARRIVED' ? 'ARRIVED' : 'PENDING',
+    work_started_at: req.workStartedAt ? new Date().toISOString() : null,
+    work_completed_at: req.completedAt ? new Date().toISOString() : null,
+    before_work_photos: req.problemPhotos || [],
+    completion_photos: req.completionPhotos || [],
+    completion_notes: completionNotes || null,
+    completion_code: null,
+    customer_otp: null
+  };
+};
 
 // Map PostgreSQL services row to Application ServiceItem
 export const mapServiceItemFromDb = (row: any, categories?: ServiceCategory[]): ServiceItem => {
@@ -488,6 +530,87 @@ export const syncEmployeeToSupabase = async (employee: Employee): Promise<boolea
 };
 
 /**
+ * Submits a public prospective vendor partner application via the secure Edge Function.
+ * This runs with service-role permissions server-side, bypassing table RLS for unauthenticated applicants.
+ */
+export const submitPartnerApplication = async (
+  vendor: Vendor
+): Promise<{ success: boolean; error?: string; vendor?: Vendor }> => {
+  if (!isSupabaseConfigured()) return { success: true, vendor };
+  try {
+    const { data, error } = await supabase.functions.invoke('create-staff-user', {
+      body: {
+        action: 'submit-partner-application',
+        id: vendor.id,
+        businessName: vendor.businessName,
+        ownerName: vendor.ownerName,
+        phone: vendor.mobile,
+        email: vendor.email,
+        category: vendor.categories[0] || 'AC & Appliances',
+        categories: vendor.categories,
+        serviceAreas: vendor.serviceAreas,
+        experienceYears: vendor.experienceYears,
+        plan: vendor.plan,
+        password: vendor.password
+      }
+    });
+
+    if (error) {
+      console.error('Edge Function partner application error:', error);
+      return { success: false, error: error.message };
+    }
+
+    if (data?.error) {
+      return { success: false, error: data.error };
+    }
+
+    return {
+      success: true,
+      vendor: data?.vendor ? mapVendorFromDb(data.vendor) : vendor
+    };
+  } catch (err: any) {
+    console.error('Failed to submit partner application via Edge Function:', err);
+    return { success: false, error: err?.message || 'Partner application failed' };
+  }
+};
+
+/**
+ * Operations Manager or Admin activates a pending vendor partner with their onboarding payment.
+ */
+export const approveVendorViaEdgeFunction = async (
+  vendorId: string,
+  paymentDetails: VendorOnboardingPayment
+): Promise<{ success: boolean; error?: string; vendor?: Vendor }> => {
+  if (!isSupabaseConfigured()) return { success: true };
+  try {
+    const { data, error } = await supabase.functions.invoke('create-staff-user', {
+      body: {
+        action: 'approve-vendor',
+        vendorId,
+        paymentDetails
+      }
+    });
+
+    if (error) {
+      console.error('Edge Function approve-vendor error:', error);
+      return { success: false, error: error.message };
+    }
+
+    if (data?.error) {
+      return { success: false, error: data.error };
+    }
+
+    return {
+      success: true,
+      vendor: data?.vendor ? mapVendorFromDb(data.vendor) : undefined
+    };
+  } catch (err: any) {
+    console.error('Failed to approve vendor via Edge Function:', err);
+    return { success: false, error: err?.message || 'Vendor activation failed' };
+  }
+};
+
+/**
  * Persists a trade vendor into Supabase PostgreSQL.
  */
 export const syncVendorToSupabase = async (vendor: Vendor): Promise<boolean> => {
@@ -496,8 +619,15 @@ export const syncVendorToSupabase = async (vendor: Vendor): Promise<boolean> => 
     const { error } = await supabase
       .from('vendors')
       .upsert(mapVendorToDb(vendor), { onConflict: 'id' });
-    if (error) console.error('Supabase vendor upsert error:', error);
-    return !error;
+    if (error) {
+      console.warn('Supabase vendor upsert direct error:', error.message);
+      if (vendor.status === 'PENDING_VERIFICATION') {
+        const appRes = await submitPartnerApplication(vendor);
+        return appRes.success;
+      }
+      return false;
+    }
+    return true;
   } catch (err) {
     console.error('Failed to sync vendor to Supabase:', err);
     return false;
@@ -517,6 +647,60 @@ export const syncServiceRequestToSupabase = async (request: ServiceRequest): Pro
     return !error;
   } catch (err) {
     console.error('Failed to sync service request to Supabase:', err);
+    return false;
+  }
+};
+
+/**
+ * Updates execution and dispatch attributes of an existing service request in Supabase PostgreSQL via UPDATE.
+ */
+export const updateServiceRequestInSupabase = async (
+  requestId: string,
+  updates: {
+    status?: string;
+    assigned_to?: any;
+    technician_notes?: string;
+    vendor_scheduled_time?: string;
+    vendor_arrival_status?: string;
+    work_started_at?: string;
+    work_completed_at?: string;
+    payment_status?: string;
+    payment_method?: string;
+    before_work_photos?: string[];
+    completion_photos?: string[];
+    completion_notes?: string;
+  }
+): Promise<boolean> => {
+  if (!isSupabaseConfigured()) return false;
+  try {
+    const payload: Record<string, any> = {
+      updated_at: new Date().toISOString()
+    };
+    if (updates.status !== undefined) payload.status = updates.status;
+    if (updates.assigned_to !== undefined) payload.assigned_to = updates.assigned_to;
+    if (updates.technician_notes !== undefined) payload.technician_notes = updates.technician_notes;
+    if (updates.vendor_scheduled_time !== undefined) payload.vendor_scheduled_time = updates.vendor_scheduled_time;
+    if (updates.vendor_arrival_status !== undefined) payload.vendor_arrival_status = updates.vendor_arrival_status;
+    if (updates.work_started_at !== undefined) payload.work_started_at = updates.work_started_at;
+    if (updates.work_completed_at !== undefined) payload.work_completed_at = updates.work_completed_at;
+    if (updates.payment_status !== undefined) payload.payment_status = updates.payment_status;
+    if (updates.payment_method !== undefined) payload.payment_method = updates.payment_method;
+    if (updates.before_work_photos !== undefined) payload.before_work_photos = updates.before_work_photos;
+    if (updates.completion_photos !== undefined) payload.completion_photos = updates.completion_photos;
+    if (updates.completion_notes !== undefined) payload.completion_notes = updates.completion_notes;
+
+    const { error } = await supabase
+      .from('service_requests')
+      .update(payload)
+      .eq('id', requestId);
+
+    if (error) {
+      console.error(`[supabaseService] Failed to update service_request ${requestId}:`, error);
+      return false;
+    }
+    return true;
+  } catch (err) {
+    console.error(`[supabaseService] Error updating service_request ${requestId}:`, err);
     return false;
   }
 };
@@ -735,6 +919,19 @@ export const fetchCustomerBookingSecret = async (
   }
 
   try {
+    // 1. Preferred: call secure get_customer_job_otp RPC (handles phone fallback and self-heals missing secrets)
+    const { data: rpcData, error: rpcError } = await supabase.rpc('get_customer_job_otp', {
+      p_request_id: requestId
+    });
+
+    if (!rpcError && rpcData && rpcData.customer_otp) {
+      return {
+        customerOtp: rpcData.customer_otp,
+        completionCode: rpcData.completion_code || `PB${rpcData.customer_otp}`
+      };
+    }
+
+    // 2. Direct select fallback from service_request_secrets
     const { data, error } = await supabase
       .from('service_request_secrets')
       .select('customer_otp, completion_code')

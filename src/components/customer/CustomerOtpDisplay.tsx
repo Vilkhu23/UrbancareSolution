@@ -11,8 +11,15 @@ interface CustomerOtpDisplayProps {
   className?: string;
 }
 
-// Real status names corresponding to assigned, on the way, or in progress
-const ACTIVE_FULFILLMENT_STATUSES = ['ASSIGNED', 'ACCEPTED', 'SCHEDULED', 'IN PROGRESS'];
+// Terminal statuses where completion OTP is no longer needed
+const TERMINAL_STATUSES = ['COMPLETED', 'CUSTOMER CONFIRMED', 'CLOSED', 'CANCELLED'];
+
+// Helper to extract the last 10 digits of an Indian phone number
+const normalizePhoneDigits = (phone?: string): string => {
+  if (!phone) return '';
+  const digits = phone.replace(/\D/g, '');
+  return digits.length >= 10 ? digits.slice(-10) : digits;
+};
 
 export const CustomerOtpDisplay: React.FC<CustomerOtpDisplayProps> = ({
   requestId,
@@ -26,22 +33,28 @@ export const CustomerOtpDisplay: React.FC<CustomerOtpDisplayProps> = ({
   const [loading, setLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
 
-  // SECURITY CHECK 1: Never show in employee, vendor, or admin/operations portals
-  if (currentRole !== 'customer') {
+  // SECURITY CHECK 1: Never show in technician or vendor portals (pros must ask resident on-site)
+  if (currentRole === 'employee' || currentRole === 'technician' || currentRole === 'vendor') {
     return null;
   }
 
-  // SECURITY CHECK 2: Only show while status is assigned, accepted, scheduled, or in progress
-  if (!ACTIVE_FULFILLMENT_STATUSES.includes(status)) {
+  // SECURITY CHECK 2: Do not show for terminal statuses (already completed, closed, or cancelled)
+  if (TERMINAL_STATUSES.includes((status || '').toUpperCase())) {
     return null;
   }
 
-  // SECURITY CHECK 3: Show only to the verified booking owner
+  // SECURITY CHECK 3: Show only to the verified booking owner (by user_id or 10-digit normalized phone)
+  const userPhone10 = normalizePhoneDigits(currentUser?.phone || authProfile?.phone);
+  const bookingPhone10 = normalizePhoneDigits(customerPhone);
+  const isPhoneMatch = Boolean(userPhone10 && bookingPhone10 && userPhone10 === bookingPhone10);
+
   const isOwner = Boolean(
     (authProfile?.id && bookingUserId && authProfile.id === bookingUserId) ||
     (currentUser?.user_id && bookingUserId && currentUser.user_id === bookingUserId) ||
     (currentUser?.id && bookingUserId && currentUser.id === bookingUserId) ||
-    (currentUser?.phone && customerPhone && currentUser.phone.replace(/\D/g, '') === customerPhone.replace(/\D/g, ''))
+    isPhoneMatch ||
+    // Resident viewing their own account profile where booking was queued/synced
+    (authProfile?.role === 'customer' && (!bookingUserId || bookingUserId === authProfile.id))
   );
 
   if (!isOwner) {

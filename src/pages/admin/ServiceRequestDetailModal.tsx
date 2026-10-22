@@ -47,6 +47,7 @@ export const ServiceRequestDetailModal: React.FC<ServiceRequestDetailModalProps>
   const [newNoteText, setNewNoteText] = useState('');
   const [selectedPhoto, setSelectedPhoto] = useState<string | null>(null);
   const [isUpdatingStatus, setIsUpdatingStatus] = useState(false);
+  const [isRecordingPayment, setIsRecordingPayment] = useState(false);
   const [statusUpdateNote, setStatusUpdateNote] = useState('');
   const [targetStatus, setTargetStatus] = useState<BookingStatus | ''>('');
 
@@ -70,15 +71,20 @@ export const ServiceRequestDetailModal: React.FC<ServiceRequestDetailModalProps>
     setTargetStatus('');
   };
 
-  const handleMarkPaid = () => {
-    recordPayment({
-      requestId: request.id,
-      customerName: request.customerName,
-      amount: request.total,
-      mode: request.paymentMode === 'CASH' ? 'CASH' : 'UPI',
-      collectedBy: request.assignedTo ? request.assignedTo.name : 'Operations Supervisor',
-      status: 'SUCCESS'
-    });
+  const handleMarkPaid = async () => {
+    setIsRecordingPayment(true);
+    try {
+      await recordPayment({
+        requestId: request.id,
+        customerName: request.customerName,
+        amount: request.total,
+        mode: request.paymentMode === 'CASH' ? 'CASH' : 'UPI',
+        collectedBy: request.assignedTo ? request.assignedTo.name : 'Operations Supervisor',
+        status: 'SUCCESS'
+      });
+    } finally {
+      setIsRecordingPayment(false);
+    }
   };
 
   const statusColors: Record<string, string> = {
@@ -386,9 +392,10 @@ export const ServiceRequestDetailModal: React.FC<ServiceRequestDetailModalProps>
                   {request.paymentStatus !== 'PAID' && (
                     <button
                       onClick={handleMarkPaid}
-                      className="px-3 py-1.5 rounded-lg bg-[#003523] hover:bg-[#144d37] text-white font-bold text-[11px] shadow-xs"
+                      disabled={isRecordingPayment}
+                      className="px-3 py-1.5 rounded-lg bg-[#003523] hover:bg-[#144d37] text-white font-bold text-[11px] shadow-xs disabled:opacity-50"
                     >
-                      Record Payment
+                      {isRecordingPayment ? 'Recording...' : 'Record Payment'}
                     </button>
                   )}
                 </div>

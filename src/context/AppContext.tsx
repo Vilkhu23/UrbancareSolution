@@ -24,7 +24,8 @@ import {
   DPDPConsentPreferences,
   DPDPNominee,
   DPDPGrievance,
-  ProfileRecord
+  ProfileRecord,
+  VendorOnboardingPayment
 } from '../types';
 import { validatePassword, validateIndianPhone, validateEmail } from '../utils/authValidation';
 import {
@@ -54,6 +55,8 @@ import {
   syncCustomerToSupabase,
   syncEmployeeToSupabase,
   syncVendorToSupabase,
+  submitPartnerApplication,
+  approveVendorViaEdgeFunction,
   syncServiceRequestToSupabase,
   syncOpportunityLedgerToSupabase,
   syncComplaintToSupabase,
@@ -62,6 +65,7 @@ import {
   syncOpsSettingsToSupabase,
   syncHomeProjectToSupabase,
   syncCustomerReviewToSupabase,
+  updateServiceRequestInSupabase,
   mapServiceRequestFromDb,
   verifyJobOtpViaRpc,
   recordPaymentViaRpc
@@ -180,7 +184,7 @@ interface AppContextType {
 
   // Payments
   payments: PaymentRecord[];
-  recordPayment: (payment: Partial<PaymentRecord>) => void;
+  recordPayment: (payment: Partial<PaymentRecord>) => Promise<boolean>;
 
   // Operations Settings
   opsSettings: OpsSettings;
@@ -191,7 +195,9 @@ interface AppContextType {
   opportunityLedger: OpportunityLedgerEntry[];
   adjustVendorOpportunities: (vendorId: string, delta: number, reason: string) => void;
   updateVendorStatus: (vendorId: string, status: Vendor['status']) => void;
-  addVendor: (vendor: Vendor) => void;
+  approveVendorWithPayment: (vendorId: string, paymentDetails: VendorOnboardingPayment) => Promise<boolean>;
+  updateVendorPaymentStatus: (vendorId: string, clearingStatus: 'CLEARED' | 'PENDING_CLEARANCE') => Promise<boolean>;
+  addVendor: (vendor: Vendor) => Promise<boolean> | void;
 
   // Vendor Portal Actions (Strict Role Protection & Privacy Gate)
   currentVendorId: string | null;
@@ -267,12 +273,20 @@ interface AppContextType {
   setSelectedDetailServiceId: (id: string | null) => void;
   isAuthModalOpen: boolean;
   setIsAuthModalOpen: (open: boolean) => void;
+  authModalMode: 'login' | 'register';
+  setAuthModalMode: (mode: 'login' | 'register') => void;
+  openAuthModal: (mode?: 'login' | 'register', returnTo?: string) => void;
+  authReturnTo: string | null;
+  setAuthReturnTo: (page: string | null) => void;
   closeAllModals: () => void;
 
-  // Customer Authentication & Session State
+  // Authentication & Session State
   authProfile: ProfileRecord | null;
+  setAuthProfile: (profile: ProfileRecord | null) => void;
   currentUser: CustomerRecord | null;
   setCurrentUser: (user: CustomerRecord | null) => void;
+  login: (emailOrPhone: string, password: string, returnTo?: string) => Promise<{ success: boolean; role?: UserRole; mustChangePassword?: boolean; message?: string }>;
+  logout: () => Promise<void>;
   loginCustomer: (phoneOrEmail: string, otpOrPassword?: string) => Promise<boolean> | boolean;
   registerCustomer: (details: {
     name: string;
@@ -311,7 +325,9 @@ interface AppContextType {
   };
   refreshDbConnection: () => Promise<void>;
   isLoadingData: boolean;
+  isAuthLoading: boolean;
   dataLoadError: string | null;
+  reloadUserData: () => Promise<void>;
 }
 
 const AppContext = createContext<AppContextType | undefined>(undefined);
@@ -328,6 +344,7 @@ const STORAGE_KEYS = {
   LEDGER: 'pindcare_ledger_v1',
   CART: 'pindcare_cart_v1',
   LOCALITY: 'pindcare_locality_v1',
+  CURRENT_PAGE: 'urbancare_current_page_v1',
   PRICE_HISTORY: 'pindcare_price_history_v1',
   CURRENT_VENDOR: 'pindcare_current_vendor_v1',
   CURRENT_EMPLOYEE: 'pindcare_current_employee_v1',
@@ -353,31 +370,32 @@ const DEFAULT_EMPTY_OPS_SETTINGS: OpsSettings = {
   activeLocalities: LOCALITIES
 };
 
-// Purges all personal data and session state from browser storage on logout,
-// strictly keeping only the preserved cart and locality preference keys.
+// Purges personal data and session state from browser storage on explicit logout,
+// strictly preserving cart, locality preference, and Supabase auth credentials (sb-* keys).
 const purgeAllPersonalStorage = () => {
   if (typeof window === 'undefined') return;
   try {
     if (window.localStorage) {
-      const preservedKeys = new Set([STORAGE_KEYS.CART, STORAGE_KEYS.LOCALITY]);
+      const preservedKeys = new Set([
+        STORAGE_KEYS.CART,
+        STORAGE_KEYS.LOCALITY,
+        STORAGE_KEYS.CURRENT_PAGE
+      ]);
       const keysToRemove: string[] = [];
       for (let i = 0; i < localStorage.length; i++) {
         const key = localStorage.key(i);
-        if (key && !preservedKeys.has(key)) {
+        // CRITICAL: NEVER delete Supabase auth tokens (keys starting with 'sb-')
+        // Supabase manages its own auth session tokens in localStorage.
+        if (key && !preservedKeys.has(key) && !key.startsWith('sb-')) {
           keysToRemove.push(key);
         }
       }
       keysToRemove.forEach((k) => localStorage.removeItem(k));
     }
-    if (window.sessionStorage) {
-      sessionStorage.clear();
-    }
   } catch (err) {
     console.warn('Storage purge notice:', err);
   }
 };
-
-const purgeLegacyPersonalData = purgeAllPersonalStorage;
 
 export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   // Authentication profile loaded from Supabase Auth & public.profiles
@@ -386,7 +404,82 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   // Role is always initialized as unprivileged 'customer' and derived strictly from Supabase
   const [currentRole, setCurrentRoleState] = useState<UserRole>('customer');
 
-  const [currentPage, setCurrentPage] = useState<string>('home');
+  // Track initial auth restoration from Supabase to prevent flashing unauthenticated states on refresh
+  const [isAuthLoading, setIsAuthLoading] = useState<boolean>(isSupabaseConfigured());
+
+  // Initialize currentPage from URL path or stored page key, fallback to 'home'
+  const [currentPage, setCurrentPageState] = useState<string>(() => {
+    if (typeof window !== 'undefined') {
+      const path = window.location.pathname.replace(/^\//, '').toLowerCase();
+      const validPages = [
+        'services',
+        'projects',
+        'how-it-works',
+        'become-partner',
+        'about',
+        'contact',
+        'account',
+        'admin',
+        'vendor',
+        'employee',
+        'reset-password'
+      ];
+      if (path && validPages.includes(path)) {
+        return path;
+      }
+      try {
+        const saved = localStorage.getItem(STORAGE_KEYS.CURRENT_PAGE);
+        if (saved && validPages.includes(saved)) {
+          return saved;
+        }
+      } catch {}
+    }
+    return 'home';
+  });
+
+  const setCurrentPage = (page: string) => {
+    setCurrentPageState(page);
+    try {
+      if (page === 'home') {
+        localStorage.removeItem(STORAGE_KEYS.CURRENT_PAGE);
+        if (typeof window !== 'undefined' && window.location.pathname !== '/') {
+          window.history.pushState(null, '', '/');
+        }
+      } else {
+        localStorage.setItem(STORAGE_KEYS.CURRENT_PAGE, page);
+        if (typeof window !== 'undefined' && window.location.pathname !== `/${page}`) {
+          window.history.pushState(null, '', `/${page}`);
+        }
+      }
+    } catch {}
+  };
+
+  useEffect(() => {
+    const handlePopState = () => {
+      const path = window.location.pathname.replace(/^\//, '').toLowerCase();
+      const validPages = [
+        'services',
+        'projects',
+        'how-it-works',
+        'become-partner',
+        'about',
+        'contact',
+        'account',
+        'admin',
+        'vendor',
+        'employee',
+        'reset-password'
+      ];
+      if (validPages.includes(path)) {
+        setCurrentPageState(path);
+      } else {
+        setCurrentPageState('home');
+      }
+    };
+    window.addEventListener('popstate', handlePopState);
+    return () => window.removeEventListener('popstate', handlePopState);
+  }, []);
+
   const [toasts, setToasts] = useState<ToastMessage[]>([]);
   
   // Demo data and localStorage persistence are permitted ONLY when Supabase
@@ -396,11 +489,6 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   const [isLoadingData, setIsLoadingData] = useState<boolean>(isSupabaseConfigured());
   const [dataLoadError, setDataLoadError] = useState<string | null>(null);
-
-  // One-time legacy personal data purge on app start
-  useEffect(() => {
-    purgeLegacyPersonalData();
-  }, []);
 
   const [currentVendorId, setCurrentVendorIdState] = useState<string | null>(() => {
     if (!isDemoFallbackAllowed) return null;
@@ -535,11 +623,18 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     return saved ? JSON.parse(saved) : INITIAL_PROJECT_REQUESTS;
   });
 
-  // Reviews
+  // Reviews: Genuine verified customer feedback from project data + submitted orders
   const [reviews, setReviews] = useState<CustomerReview[]>(() => {
-    if (!isDemoFallbackAllowed) return [];
     const saved = localStorage.getItem(STORAGE_KEYS.REVIEWS);
-    return saved ? JSON.parse(saved) : INITIAL_REVIEWS;
+    if (saved) {
+      try {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+      } catch {
+        // fallback
+      }
+    }
+    return INITIAL_REVIEWS;
   });
 
   // Audit Logs
@@ -580,6 +675,16 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const [isLocalityModalOpen, setIsLocalityModalOpen] = useState(false);
   const [selectedDetailServiceId, setSelectedDetailServiceId] = useState<string | null>(null);
   const [isAuthModalOpen, setIsAuthModalOpen] = useState(false);
+  const [authModalMode, setAuthModalMode] = useState<'login' | 'register'>('login');
+  const [authReturnTo, setAuthReturnTo] = useState<string | null>(null);
+
+  const openAuthModal = (mode: 'login' | 'register' = 'login', returnTo?: string) => {
+    setAuthModalMode(mode);
+    if (returnTo) {
+      setAuthReturnTo(returnTo);
+    }
+    setIsAuthModalOpen(true);
+  };
 
   // DPDP Modals & Rights States (clean state without seeded personal data)
   const [isDPDPNoticeOpen, setIsDPDPNoticeOpen] = useState(false);
@@ -699,9 +804,46 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   }, [projectRequests, isDemoFallbackAllowed]);
 
   useEffect(() => {
-    if (!isDemoFallbackAllowed) return;
     localStorage.setItem(STORAGE_KEYS.REVIEWS, JSON.stringify(reviews));
-  }, [reviews, isDemoFallbackAllowed]);
+  }, [reviews]);
+
+  // Synchronize reviews from verified completed orders (e.g. #PB-5856)
+  useEffect(() => {
+    const reviewedRequests = requests.filter((r) => r.customerRating && r.customerRating > 0);
+    if (reviewedRequests.length > 0) {
+      setReviews((prev) => {
+        let updated = [...prev];
+        let hasChanges = false;
+        reviewedRequests.forEach((req) => {
+          const existingIdx = updated.findIndex((rv) => rv.requestId === req.id);
+          const reviewObj: CustomerReview = {
+            id: `rev-${req.id}`,
+            requestId: req.id,
+            customerName: req.customerName,
+            locality: req.locality,
+            serviceName: req.items[0]?.serviceName || 'Home Service',
+            technicianName: req.assignedTo?.name || 'Assigned Specialist',
+            rating: req.customerRating!,
+            review: req.customerFeedback || `${req.customerRating}-star verified domestic service.`,
+            timestamp: req.updatedAt || 'Recently'
+          };
+          if (existingIdx >= 0) {
+            if (
+              updated[existingIdx].rating !== reviewObj.rating ||
+              updated[existingIdx].review !== reviewObj.review
+            ) {
+              updated[existingIdx] = reviewObj;
+              hasChanges = true;
+            }
+          } else {
+            updated = [reviewObj, ...updated];
+            hasChanges = true;
+          }
+        });
+        return hasChanges ? updated : prev;
+      });
+    }
+  }, [requests]);
 
   useEffect(() => {
     if (!isDemoFallbackAllowed) return;
@@ -856,8 +998,16 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       const roleData = await loadUserDataByRoleFromSupabase(role, userId);
       if (roleData) {
         if (roleData.customers) setCustomers(roleData.customers);
-        if (roleData.employees) setEmployees(roleData.employees);
-        if (roleData.vendors) setVendors(roleData.vendors);
+        if (roleData.employees) {
+          setEmployees(roleData.employees);
+          const matched = roleData.employees.find((e) => e.user_id === userId || e.id === userId);
+          if (matched) setCurrentEmployeeIdState(matched.id);
+        }
+        if (roleData.vendors) {
+          setVendors(roleData.vendors);
+          const matched = roleData.vendors.find((v) => v.user_id === userId || v.id === userId);
+          if (matched) setCurrentVendorIdState(matched.id);
+        }
         if (roleData.requests) setRequests(roleData.requests);
         if (roleData.ledger) setOpportunityLedger(roleData.ledger);
         if (roleData.complaints) setComplaints(roleData.complaints);
@@ -876,6 +1026,13 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     setCurrentRoleState(role);
     if (isSupabaseConfigured() && authProfile) {
       const dbRole = role === 'employee' ? 'technician' : role === 'operations' ? 'ops_manager' : role;
+      await applyRoleData(dbRole, authProfile.id);
+    }
+  };
+
+  const reloadUserData = async () => {
+    if (isSupabaseConfigured() && authProfile) {
+      const dbRole = currentRole === 'employee' ? 'technician' : currentRole === 'operations' ? 'ops_manager' : currentRole;
       await applyRoleData(dbRole, authProfile.id);
     }
   };
@@ -945,53 +1102,77 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }
   }, []);
 
+  // Centralized helper to map profile attributes to AppContext state
+  const syncProfileToState = async (profile: ProfileRecord, userEmail: string) => {
+    setAuthProfile(profile);
+    if (profile.role === 'customer') {
+      setCurrentRoleState('customer');
+      setCurrentUserState({
+        id: profile.id,
+        user_id: profile.id,
+        name: profile.full_name,
+        phone: profile.phone,
+        email: userEmail,
+        locality: profile.locality || 'Sector 94, Mohali',
+        address: profile.address || '',
+        totalBookings: 0,
+        totalSpent: 0,
+        registeredDate: profile.created_at ? new Date(profile.created_at).toISOString().split('T')[0] : new Date().toISOString().split('T')[0],
+        status: 'ACTIVE'
+      });
+    } else if (profile.role === 'technician') {
+      setCurrentRoleState('employee');
+    } else if (profile.role === 'vendor') {
+      setCurrentRoleState('vendor');
+    } else if (profile.role === 'admin' || profile.role === 'ops_manager') {
+      setCurrentRoleState('operations');
+    }
+
+    await applyRoleData(profile.role, profile.id);
+
+    if (profile.must_change_password) {
+      showToast('Temporary password in use. Please change your password.', 'warning');
+      setCurrentPage('reset-password');
+    }
+  };
+
   // Supabase Auth Session & Verified Role Synchronization
   useEffect(() => {
     let isMounted = true;
 
     const syncSession = async () => {
-      if (isSupabaseConfigured()) {
-        try {
-          const { data: { session } } = await supabase.auth.getSession();
-          if (session?.user && isMounted) {
-            hasActiveSessionRef.current = true;
-            const { data: profile } = await supabase
-              .from('profiles')
-              .select('*')
-              .eq('id', session.user.id)
-              .maybeSingle();
+      if (!isSupabaseConfigured()) {
+        if (isMounted) setIsAuthLoading(false);
+        return;
+      }
 
-            if (profile && isMounted) {
-              setAuthProfile(profile);
-              if (profile.role === 'customer') {
-                setCurrentRoleState('customer');
-                setCurrentUserState({
-                  id: profile.id,
-                  user_id: profile.id,
-                  name: profile.full_name,
-                  phone: profile.phone,
-                  email: session.user.email || '',
-                  locality: profile.locality || 'Sector 94, Mohali',
-                  address: profile.address || '',
-                  totalBookings: 0,
-                  totalSpent: 0,
-                  registeredDate: profile.created_at ? new Date(profile.created_at).toISOString().split('T')[0] : new Date().toISOString().split('T')[0],
-                  status: 'ACTIVE'
-                });
-              } else if (profile.role === 'technician') {
-                setCurrentRoleState('employee');
-              } else if (profile.role === 'vendor') {
-                setCurrentRoleState('vendor');
-              } else if (profile.role === 'admin' || profile.role === 'ops_manager') {
-                setCurrentRoleState('operations');
-              }
+      try {
+        const { data: { session }, error: sessionError } = await supabase.auth.getSession();
+        if (sessionError) {
+          console.warn('Session retrieval error:', sessionError);
+        }
 
-              // Load data strictly matching authenticated role
-              await applyRoleData(profile.role, profile.id);
-            }
+        if (session?.user && isMounted) {
+          hasActiveSessionRef.current = true;
+          const { data: profile, error: profileError } = await supabase
+            .from('profiles')
+            .select('*')
+            .eq('id', session.user.id)
+            .maybeSingle();
+
+          if (profileError) {
+            console.error('Failed to load user profile on startup:', profileError);
           }
-        } catch (err) {
-          console.warn('Supabase auth session sync notice:', err);
+
+          if (profile && isMounted) {
+            await syncProfileToState(profile, session.user.email || '');
+          }
+        }
+      } catch (err) {
+        console.warn('Supabase auth session sync notice:', err);
+      } finally {
+        if (isMounted) {
+          setIsAuthLoading(false);
         }
       }
     };
@@ -1001,9 +1182,14 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     if (isSupabaseConfigured()) {
       const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
         if (!isMounted) return;
+
+        // Skip INITIAL_SESSION here because syncSession() handles initial mount with full loading state
+        if (event === 'INITIAL_SESSION') {
+          return;
+        }
+
         if (event === 'SIGNED_OUT' || !session) {
           if (hasActiveSessionRef.current && !isExplicitLogoutRef.current) {
-            // Unexpected session termination / expiry: show notification and open login modal
             clearSessionData();
             closeAllModals();
             setCurrentPage('home');
@@ -1016,7 +1202,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
             clearSessionData();
           }
           hasActiveSessionRef.current = false;
-        } else if (session?.user) {
+        } else if (session?.user && (event === 'SIGNED_IN' || event === 'TOKEN_REFRESHED' || event === 'USER_UPDATED')) {
           hasActiveSessionRef.current = true;
           try {
             const { data: profile } = await supabase
@@ -1026,36 +1212,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
               .maybeSingle();
 
             if (profile && isMounted) {
-              setAuthProfile(profile);
-              if (profile.role === 'customer') {
-                setCurrentRoleState('customer');
-                setCurrentUserState({
-                  id: profile.id,
-                  user_id: profile.id,
-                  name: profile.full_name,
-                  phone: profile.phone,
-                  email: session.user.email || '',
-                  locality: profile.locality || 'Sector 94, Mohali',
-                  address: profile.address || '',
-                  totalBookings: 0,
-                  totalSpent: 0,
-                  registeredDate: profile.created_at ? new Date(profile.created_at).toISOString().split('T')[0] : new Date().toISOString().split('T')[0],
-                  status: 'ACTIVE'
-                });
-              } else if (profile.role === 'technician') {
-                setCurrentRoleState('employee');
-              } else if (profile.role === 'vendor') {
-                setCurrentRoleState('vendor');
-              } else if (profile.role === 'admin' || profile.role === 'ops_manager') {
-                setCurrentRoleState('operations');
-              }
-
-              await applyRoleData(profile.role, profile.id);
-
-              if (profile.must_change_password) {
-                showToast('Temporary password in use. Please change your password.', 'warning');
-                setCurrentPage('reset-password');
-              }
+              await syncProfileToState(profile, session.user.email || '');
             }
           } catch (err) {
             console.warn('Supabase auth state change error:', err);
@@ -1123,7 +1280,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     return false;
   };
 
-  const handleFailedLogin = () => {
+  const handleFailedLogin = (customMessage?: string) => {
     const nextAttempts = failedAttempts + 1;
     if (nextAttempts >= 5) {
       setCooldownUntil(Date.now() + 30000);
@@ -1131,7 +1288,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       showToast('Too many failed attempts. Sign in locked for 30 seconds.', 'error');
     } else {
       setFailedAttempts(nextAttempts);
-      showToast('Incorrect email or password', 'error');
+      const remaining = 5 - nextAttempts;
+      const msg = customMessage || `Incorrect email or password. (${remaining} attempt${remaining === 1 ? '' : 's'} remaining)`;
+      showToast(msg, 'error');
     }
   };
 
@@ -1140,25 +1299,31 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     setCooldownUntil(0);
   };
 
-  const loginCustomer = async (phoneOrEmail: string, otpOrPassword?: string): Promise<boolean> => {
-    if (checkLoginCooldown()) return false;
+  const login = async (
+    emailOrPhone: string,
+    passwordInput: string,
+    returnTo?: string
+  ): Promise<{ success: boolean; role?: UserRole; mustChangePassword?: boolean; message?: string }> => {
+    if (checkLoginCooldown()) {
+      return { success: false, message: 'Too many attempts. Please try again after cooldown.' };
+    }
 
-    const credential = (otpOrPassword || '').trim();
-    const cleanInput = phoneOrEmail.trim().toLowerCase();
+    const cleanInput = (emailOrPhone || '').trim();
+    const cleanPassword = (passwordInput || '').trim();
 
-    if (!cleanInput || !credential) {
-      showToast('Please enter both email/phone and password.', 'error');
-      return false;
+    if (!cleanInput || !cleanPassword) {
+      showToast('Please enter both email and password.', 'error');
+      return { success: false, message: 'Please enter both email and password.' };
     }
 
     if (isSupabaseConfigured()) {
       try {
-        let emailToUse = cleanInput;
+        let emailToUse = cleanInput.toLowerCase();
         if (!cleanInput.includes('@')) {
           const cleanPhoneDigits = cleanInput.replace(/\D/g, '');
           const matchedCust = customers.find((c) => c.phone.replace(/\D/g, '').endsWith(cleanPhoneDigits.slice(-10)));
           if (matchedCust && matchedCust.email) {
-            emailToUse = matchedCust.email;
+            emailToUse = matchedCust.email.toLowerCase();
           } else {
             emailToUse = `${cleanPhoneDigits}@resident.urbancaresolution.in`;
           }
@@ -1166,46 +1331,135 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
         const { data, error } = await supabase.auth.signInWithPassword({
           email: emailToUse,
-          password: credential,
+          password: cleanPassword
         });
 
         if (error || !data.user) {
-          handleFailedLogin();
-          return false;
+          handleFailedLogin('Incorrect email or password. Please verify and try again.');
+          return { success: false, message: 'Incorrect email or password.' };
+        }
+
+        const { data: profile, error: profileError } = await supabase
+          .from('profiles')
+          .select('*')
+          .eq('id', data.user.id)
+          .maybeSingle();
+
+        if (profileError || !profile) {
+          console.error('Failed to load profile on login:', profileError);
+          handleFailedLogin('Profile could not be loaded.');
+          await supabase.auth.signOut();
+          return { success: false, message: 'Profile record not found.' };
         }
 
         handleSuccessfulLogin();
-        showToast('Signed in successfully!', 'success');
-        return true;
-      } catch {
-        handleFailedLogin();
-        return false;
+        await syncProfileToState(profile, data.user.email || '');
+
+        let resolvedRole: UserRole = 'customer';
+        let targetDestination = 'home';
+
+        if (profile.role === 'admin' || profile.role === 'ops_manager') {
+          resolvedRole = 'operations';
+          targetDestination = 'admin';
+        } else if (profile.role === 'technician') {
+          resolvedRole = 'employee';
+          targetDestination = 'employee';
+        } else if (profile.role === 'vendor') {
+          resolvedRole = 'vendor';
+          targetDestination = 'vendor';
+        } else {
+          resolvedRole = 'customer';
+          const SAFE_CUSTOMER_PAGES = new Set([
+            'home', 'services', 'projects', 'how-it-works', 'become-partner', 'about', 'contact', 'account'
+          ]);
+          const effectiveReturnTo = returnTo || authReturnTo;
+          if (effectiveReturnTo && SAFE_CUSTOMER_PAGES.has(effectiveReturnTo)) {
+            targetDestination = effectiveReturnTo;
+          } else {
+            targetDestination = 'home';
+          }
+        }
+
+        setAuthReturnTo(null);
+
+        if (profile.must_change_password) {
+          showToast('Temporary password in use. Please change your password.', 'warning');
+          setCurrentPage('reset-password');
+        } else {
+          setCurrentPage(targetDestination);
+          showToast(`Welcome back, ${profile.full_name || 'User'}!`, 'success');
+        }
+
+        return {
+          success: true,
+          role: resolvedRole,
+          mustChangePassword: !!profile.must_change_password
+        };
+      } catch (err: any) {
+        handleFailedLogin('Incorrect email or password. Please verify and try again.');
+        return { success: false, message: err?.message || 'Login failed.' };
       }
     }
 
     // Local offline mock fallback (DEV only)
     if (!import.meta.env.DEV) {
       showToast('Service not configured. Please contact administrator.', 'error');
-      return false;
+      return { success: false, message: 'Service not configured.' };
+    }
+
+    if (cleanInput.includes('ops') || cleanInput.includes('admin')) {
+      if (opsSettings.password && cleanPassword === opsSettings.password) {
+        handleSuccessfulLogin();
+        setCurrentRoleState('operations');
+        setCurrentPage('admin');
+        showToast('Welcome, Operations Command Supervisor!', 'success');
+        return { success: true, role: 'operations' };
+      }
+    }
+
+    const matchedEmp = employees.find((e) => (e.email || '').toLowerCase() === cleanInput.toLowerCase() || e.id === cleanInput);
+    if (matchedEmp && matchedEmp.password && matchedEmp.password === cleanPassword) {
+      handleSuccessfulLogin();
+      setCurrentRoleState('employee');
+      setCurrentEmployeeIdState(matchedEmp.id);
+      setCurrentPage('employee');
+      showToast(`Welcome back, ${matchedEmp.name}!`, 'success');
+      return { success: true, role: 'employee' };
+    }
+
+    const matchedVnd = vendors.find((v) => (v.email || '').toLowerCase() === cleanInput.toLowerCase() || v.id === cleanInput);
+    if (matchedVnd && matchedVnd.password && matchedVnd.password === cleanPassword) {
+      handleSuccessfulLogin();
+      setCurrentRoleState('vendor');
+      setCurrentVendorIdState(matchedVnd.id);
+      setCurrentPage('vendor');
+      showToast(`Welcome back, ${matchedVnd.businessName}!`, 'success');
+      return { success: true, role: 'vendor' };
     }
 
     const cleanPhoneDigits = cleanInput.replace(/\D/g, '');
-    const existing = customers.find((c) => {
+    const matchedCust = customers.find((c) => {
       const cEmail = (c.email || '').toLowerCase();
       const cDigits = c.phone.replace(/\D/g, '');
-      return cEmail === cleanInput || (cleanPhoneDigits.length >= 10 && cDigits.endsWith(cleanPhoneDigits.slice(-10)));
+      return cEmail === cleanInput.toLowerCase() || (cleanPhoneDigits.length >= 10 && cDigits.endsWith(cleanPhoneDigits.slice(-10)));
     });
 
-    if (existing && existing.password && existing.password === credential) {
+    if (matchedCust && matchedCust.password && matchedCust.password === cleanPassword) {
       handleSuccessfulLogin();
-      setCurrentUser(existing);
-      setCurrentRole('customer');
-      showToast(`Welcome back, ${existing.name}!`, 'success');
-      return true;
+      setCurrentUserState(matchedCust);
+      setCurrentRoleState('customer');
+      setCurrentPage('home');
+      showToast(`Welcome back, ${matchedCust.name}!`, 'success');
+      return { success: true, role: 'customer' };
     }
 
-    handleFailedLogin();
-    return false;
+    handleFailedLogin('Incorrect email or password.');
+    return { success: false, message: 'Incorrect email or password.' };
+  };
+
+  const loginCustomer = async (phoneOrEmail: string, otpOrPassword?: string): Promise<boolean> => {
+    const res = await login(phoneOrEmail, otpOrPassword || '');
+    return res.success;
   };
 
   const registerCustomer = async (details: {
@@ -1324,8 +1578,10 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     return newCustomer;
   };
 
-  const logoutCustomer = async () => {
+  const logout = async () => {
     isExplicitLogoutRef.current = true;
+    closeAllModals();
+    clearSessionData();
     if (isSupabaseConfigured()) {
       try {
         await supabase.auth.signOut();
@@ -1333,16 +1589,22 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         console.warn('Supabase logout notice:', err);
       }
     }
-    closeAllModals();
-    clearSessionData();
     setCurrentPage('home');
     if (typeof window !== 'undefined') {
       window.history.replaceState(null, '', '/');
     }
-    showToast('Logged out of account', 'info');
+    showToast('You have been signed out.', 'info');
     setTimeout(() => {
       isExplicitLogoutRef.current = false;
     }, 500);
+  };
+
+  const logoutCustomer = async () => {
+    await logout();
+  };
+
+  const logoutStaff = async () => {
+    await logout();
   };
 
   const loginStaff = async (
@@ -1350,134 +1612,10 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     entityIdOrPassword?: string,
     maybePassword?: string
   ): Promise<boolean> => {
-    if (checkLoginCooldown()) return false;
-
-    let email = '';
-    let password = '';
-
-    if (maybePassword !== undefined) {
-      // Legacy call: loginStaff(role, entityId, password)
-      const role = roleOrEmail;
-      const entityId = entityIdOrPassword;
-      password = maybePassword.trim();
-
-      if (role === 'operations') {
-        email = 'ops@urbancaresolution.in';
-      } else if (role === 'employee') {
-        const emp = employees.find((e) => e.id === entityId);
-        email = emp?.mobile ? `${emp.mobile.replace(/\D/g, '')}@staff.urbancaresolution.in` : 'tech@urbancaresolution.in';
-      } else if (role === 'vendor') {
-        const vnd = vendors.find((v) => v.id === entityId);
-        email = vnd?.email || (vnd?.mobile ? `${vnd.mobile.replace(/\D/g, '')}@partner.urbancaresolution.in` : 'vendor@urbancaresolution.in');
-      }
-    } else {
-      // Modern signature: loginStaff(email, password)
-      email = roleOrEmail.trim();
-      password = (entityIdOrPassword || '').trim();
-    }
-
-    if (!email || !password) {
-      showToast('Please enter both email and password.', 'error');
-      return false;
-    }
-
-    if (isSupabaseConfigured()) {
-      try {
-        const { data, error } = await supabase.auth.signInWithPassword({
-          email,
-          password,
-        });
-
-        if (error || !data.user) {
-          handleFailedLogin();
-          return false;
-        }
-
-        // Verify profile and staff role from the database
-        const { data: profile } = await supabase
-          .from('profiles')
-          .select('*')
-          .eq('id', data.user.id)
-          .maybeSingle();
-
-        if (!profile || profile.role === 'customer') {
-          showToast('Account does not have staff permissions.', 'error');
-          await supabase.auth.signOut();
-          return false;
-        }
-
-        handleSuccessfulLogin();
-        setAuthProfile(profile);
-
-        if (profile.must_change_password) {
-          showToast('Temporary password in use. Please change your password.', 'warning');
-          setCurrentPage('reset-password');
-          return true;
-        }
-
-        if (profile.role === 'admin' || profile.role === 'ops_manager') {
-          setCurrentRole('operations');
-          setCurrentPage('admin');
-          showToast(`Welcome, ${profile.full_name}! Operations Hub unlocked.`, 'success');
-        } else if (profile.role === 'technician') {
-          setCurrentRole('employee');
-          const matchedEmp = employees.find((e) => e.user_id === profile.id || e.id === profile.id);
-          if (matchedEmp) setCurrentEmployeeIdState(matchedEmp.id);
-          setCurrentPage('employee');
-          showToast(`Welcome, ${profile.full_name}! Technician Hub unlocked.`, 'success');
-        } else if (profile.role === 'vendor') {
-          setCurrentRole('vendor');
-          const matchedVnd = vendors.find((v) => v.user_id === profile.id || v.id === profile.id);
-          if (matchedVnd) setCurrentVendorIdState(matchedVnd.id);
-          setCurrentPage('vendor');
-          showToast(`Welcome, ${profile.full_name}! Partner Portal unlocked.`, 'success');
-        }
-        return true;
-      } catch {
-        handleFailedLogin();
-        return false;
-      }
-    }
-
-    // Local offline mock fallback (DEV only)
-    if (!import.meta.env.DEV) {
-      showToast('Service not configured. Please contact administrator.', 'error');
-      return false;
-    }
-
-    if (email.includes('ops') || email.includes('admin')) {
-      if (opsSettings.password && password === opsSettings.password) {
-        handleSuccessfulLogin();
-        setCurrentRole('operations');
-        setCurrentPage('admin');
-        showToast('Welcome, Operations Command Supervisor!', 'success');
-        return true;
-      }
-    }
-
-    handleFailedLogin();
-    return false;
-  };
-
-  const logoutStaff = async () => {
-    isExplicitLogoutRef.current = true;
-    if (isSupabaseConfigured()) {
-      try {
-        await supabase.auth.signOut();
-      } catch (err) {
-        console.warn('Supabase logout notice:', err);
-      }
-    }
-    closeAllModals();
-    clearSessionData();
-    setCurrentPage('home');
-    if (typeof window !== 'undefined') {
-      window.history.replaceState(null, '', '/');
-    }
-    showToast('Signed out of staff workspace', 'info');
-    setTimeout(() => {
-      isExplicitLogoutRef.current = false;
-    }, 500);
+    const email = maybePassword !== undefined ? (roleOrEmail === 'operations' ? 'ops@urbancaresolution.in' : roleOrEmail) : roleOrEmail;
+    const pass = maybePassword !== undefined ? maybePassword : (entityIdOrPassword || '');
+    const res = await login(email, pass);
+    return res.success;
   };
 
   const updateCustomerStatus = (customerId: string, status: CustomerRecord['status']) => {
@@ -1529,11 +1667,13 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     showToast(`Complaint #${id} marked resolved`, 'success');
   };
 
-  const recordPayment = (pay: Partial<PaymentRecord>) => {
+  const recordPayment = async (pay: Partial<PaymentRecord>): Promise<boolean> => {
+    const rawReqId = pay.requestId || 'PB-DIRECT';
+    const targetRequestId = rawReqId.replace(/^#/, '');
+
     const newRecord: PaymentRecord = {
       id: `pay-${Date.now()}`,
       user_id: pay.user_id || authProfile?.id || currentUser?.user_id || currentUser?.id,
-      requestId: pay.requestId || 'PB-DIRECT',
       customerName: pay.customerName || 'Customer',
       amount: pay.amount || 0,
       mode: pay.mode || 'UPI',
@@ -1541,13 +1681,48 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       transactionRef: pay.transactionRef || `TXN-${Date.now()}`,
       collectedBy: pay.collectedBy || 'Operations Lead',
       date: new Date().toLocaleString('en-IN', { dateStyle: 'short', timeStyle: 'short' }),
-      ...pay
+      ...pay,
+      requestId: targetRequestId
     };
+
+    if (isSupabaseConfigured() && targetRequestId && targetRequestId !== 'PB-DIRECT' && targetRequestId !== 'PB-MANUAL') {
+      const dbMethod: 'CASH' | 'UPI' | 'ONLINE' =
+        newRecord.mode === 'CASH' ? 'CASH' :
+        newRecord.mode === 'ONLINE_CARD' || newRecord.mode === 'NET_BANKING' ? 'ONLINE' : 'UPI';
+
+      try {
+        const rpcResult = await recordPaymentViaRpc(targetRequestId, newRecord.amount, dbMethod);
+
+        if (!rpcResult.success) {
+          console.warn('[recordPayment] RPC error, attempting direct service_requests update fallback:', rpcResult.message);
+          const updated = await updateServiceRequestInSupabase(targetRequestId, {
+            payment_status: 'PAID',
+            payment_method: dbMethod
+          });
+
+          if (!updated) {
+            showToast(`Could not persist payment to database: ${rpcResult.message}`, 'error');
+            return false;
+          }
+        }
+      } catch (err: any) {
+        console.error('[recordPayment] Error persisting payment to Supabase:', err);
+        const updated = await updateServiceRequestInSupabase(targetRequestId, {
+          payment_status: 'PAID',
+          payment_method: dbMethod
+        });
+        if (!updated) {
+          showToast(`Error recording payment: ${err?.message || 'Network error'}`, 'error');
+          return false;
+        }
+      }
+    }
+
     setPayments((prev) => [newRecord, ...prev]);
     if (newRecord.requestId) {
       setRequests((prev) =>
         prev.map((r) =>
-          r.id === newRecord.requestId
+          r.id === newRecord.requestId || r.id === rawReqId
             ? { ...r, paymentStatus: 'PAID', paymentMode: newRecord.mode === 'CASH' ? 'CASH' : 'UPI' }
             : r
         )
@@ -1560,6 +1735,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       `Recorded ₹${newRecord.amount} (${newRecord.mode}) ref: ${newRecord.transactionRef}`
     );
     showToast(`Payment of ₹${newRecord.amount} logged!`, 'success');
+    return true;
   };
 
   const updateOpsSettings = (updates: Partial<OpsSettings>) => {
@@ -2024,6 +2200,16 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     );
     addAuditEntry('STATUS_CHANGED', 'SERVICE_REQUEST', requestId, `Status -> ${newStatus}. Note: ${note || 'None'}`);
     showToast(`Request ${requestId} status updated to ${newStatus}`, 'info');
+
+    if (isSupabaseConfigured()) {
+      updateServiceRequestInSupabase(requestId, {
+        status: newStatus,
+        technician_notes: note || undefined,
+        payment_status: newStatus === 'COMPLETED' || newStatus === 'CUSTOMER CONFIRMED' ? 'PAID' : undefined
+      }).catch((err) => {
+        console.error('Failed to sync status update to Supabase:', err);
+      });
+    }
   };
 
   // MANUAL ASSIGNMENT (Critical Operations Core)
@@ -2161,6 +2347,49 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       assignedBy || 'Harman (Ops Lead)'
     );
     showToast(`Manually assigned ${assignedInfo?.name} to request ${requestId}`, 'success');
+
+    if (isSupabaseConfigured()) {
+      updateServiceRequestInSupabase(requestId, {
+        status: 'ASSIGNED',
+        assigned_to: assignedInfo,
+        technician_notes: notes || undefined
+      }).catch((err) => {
+        console.error('Failed to sync assignment to Supabase:', err);
+      });
+
+      if (assigneeType === 'VENDOR') {
+        const vnd = vendors.find((v) => v.id === assigneeId);
+        if (vnd) {
+          const newUsed = vnd.plan.usedOpportunities + 1;
+          const newRemaining = vnd.plan.totalOpportunities - newUsed;
+          const ledgerEntry: OpportunityLedgerEntry = {
+            id: `led-${Date.now()}`,
+            vendorId: vnd.id,
+            vendorName: vnd.businessName,
+            change: -1,
+            balanceAfter: Math.max(0, newRemaining),
+            reason: `Consumed Qualified Work Opportunity for Order ${requestId}`,
+            performedBy: assignedBy || 'Operations Supervisor (Manual Dispatch)',
+            timestamp: now,
+            serviceRequestId: requestId
+          };
+          syncOpportunityLedgerToSupabase(ledgerEntry).catch((err) => {
+            console.error('Failed to sync opportunity ledger to Supabase:', err);
+          });
+          syncVendorToSupabase({
+            ...vnd,
+            activeJobs: vnd.activeJobs + 1,
+            plan: {
+              ...vnd.plan,
+              usedOpportunities: newUsed,
+              remainingOpportunities: Math.max(0, newRemaining)
+            }
+          }).catch((err) => {
+            console.error('Failed to sync vendor quota to Supabase:', err);
+          });
+        }
+      }
+    }
   };
 
   const reassignRequest = (
@@ -2234,17 +2463,25 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   };
 
   const updateVendorStatus = (vendorId: string, status: Vendor['status']) => {
+    let updatedVnd: Vendor | null = null;
     setVendors((prev) =>
-      prev.map((v) =>
-        v.id === vendorId
-          ? {
-              ...v,
-              status,
-              documentsVerified: status === 'ACTIVE' ? true : v.documentsVerified
-            }
-          : v
-      )
+      prev.map((v) => {
+        if (v.id === vendorId) {
+          updatedVnd = {
+            ...v,
+            status,
+            documentsVerified: status === 'ACTIVE' ? true : v.documentsVerified
+          };
+          return updatedVnd;
+        }
+        return v;
+      })
     );
+    if (updatedVnd && isSupabaseConfigured()) {
+      syncVendorToSupabase(updatedVnd).catch((err) => {
+        console.error('Failed to sync vendor status to Supabase:', err);
+      });
+    }
     const vnd = vendors.find((v) => v.id === vendorId);
     const name = vnd ? vnd.businessName : vendorId;
     addAuditEntry(
@@ -2260,10 +2497,173 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }
   };
 
-  const addVendor = (vendor: Vendor) => {
+  const approveVendorWithPayment = async (
+    vendorId: string,
+    paymentDetails: VendorOnboardingPayment
+  ): Promise<boolean> => {
+    const vnd = vendors.find((v) => v.id === vendorId);
+    if (!vnd) {
+      showToast('Vendor not found', 'error');
+      return false;
+    }
+
+    // 1. Update vendor record with ACTIVE status, verified docs, and onboardingPayment
+    const updatedVendor: Vendor = {
+      ...vnd,
+      status: 'ACTIVE',
+      documentsVerified: true,
+      onboardingPayment: paymentDetails,
+      plan: {
+        ...vnd.plan,
+        onboardingPayment: paymentDetails
+      }
+    };
+
+    setVendors((prev) => prev.map((v) => (v.id === vendorId ? updatedVendor : v)));
+
+    // 2. Persist updated vendor to Supabase if configured
+    if (isSupabaseConfigured()) {
+      approveVendorViaEdgeFunction(vendorId, paymentDetails)
+        .then((res) => {
+          if (res.vendor) {
+            setVendors((prev) => prev.map((v) => (v.id === vendorId ? res.vendor! : v)));
+          }
+        })
+        .catch((err) => {
+          console.error('Failed to approve vendor via edge function, falling back to direct sync:', err);
+          syncVendorToSupabase(updatedVendor).catch((err2) => {
+            console.error('Failed to sync approved vendor to Supabase:', err2);
+          });
+        });
+    }
+
+    // 3. Create and record PaymentRecord for financial ledger tracking
+    const mode =
+      paymentDetails.method === 'CHEQUE'
+        ? 'CHEQUE'
+        : paymentDetails.method === 'CASH'
+        ? 'CASH'
+        : 'ONLINE';
+    const status =
+      paymentDetails.method === 'CHEQUE' && paymentDetails.chequeClearingStatus === 'PENDING_CLEARANCE'
+        ? 'PENDING'
+        : 'SUCCESS';
+
+    const paymentRecord: PaymentRecord = {
+      id: `pay-vnd-${Date.now()}`,
+      requestId: `ONBOARD-${vnd.id}`,
+      customerName: `Vendor: ${vnd.businessName} (${vnd.ownerName})`,
+      amount: Number(paymentDetails.amount),
+      mode,
+      status,
+      transactionRef: paymentDetails.transactionRef,
+      collectedBy: paymentDetails.collectedBy || authProfile?.full_name || 'Operations Lead',
+      date: paymentDetails.paidAt || new Date().toISOString().split('T')[0],
+      paymentType: 'VENDOR_ONBOARDING',
+      notes: `${paymentDetails.method} payment for ${vnd.plan.name} onboarding plan. ${
+        paymentDetails.method === 'CHEQUE'
+          ? `Cheque #${paymentDetails.transactionRef} (${paymentDetails.bankName || 'Bank'}), Date: ${paymentDetails.chequeDate || 'N/A'}`
+          : paymentDetails.method === 'CASH'
+          ? `Receipt #${paymentDetails.receiptNumber || paymentDetails.transactionRef}`
+          : `UTR/Ref: ${paymentDetails.transactionRef}`
+      }. ${paymentDetails.notes || ''}`
+    };
+
+    setPayments((prev) => [paymentRecord, ...prev]);
+
+    // Also persist to Supabase payments via recordPayment
+    if (isSupabaseConfigured()) {
+      recordPayment(paymentRecord).catch((err) => {
+        console.error('Failed to persist onboarding payment record to Supabase:', err);
+      });
+    }
+
+    // 4. Audit entry
+    addAuditEntry(
+      'VENDOR_ACTIVATED_WITH_PAYMENT',
+      'VENDOR',
+      vendorId,
+      `Vendor "${vnd.businessName}" approved & activated. Plan fee of ₹${paymentDetails.amount} received via ${paymentDetails.method} (${paymentDetails.transactionRef}). Collected by ${paymentDetails.collectedBy}.`
+    );
+
+    showToast(
+      `Vendor "${vnd.businessName}" approved! ₹${paymentDetails.amount} recorded via ${paymentDetails.method}.`,
+      'success'
+    );
+    return true;
+  };
+
+  const updateVendorPaymentStatus = async (
+    vendorId: string,
+    clearingStatus: 'CLEARED' | 'PENDING_CLEARANCE'
+  ): Promise<boolean> => {
+    let updatedVnd: Vendor | null = null;
+    setVendors((prev) =>
+      prev.map((v) => {
+        if (v.id === vendorId && v.onboardingPayment) {
+          const updatedPayment: VendorOnboardingPayment = {
+            ...v.onboardingPayment,
+            chequeClearingStatus: clearingStatus
+          };
+          updatedVnd = {
+            ...v,
+            onboardingPayment: updatedPayment,
+            plan: {
+              ...v.plan,
+              onboardingPayment: updatedPayment
+            }
+          };
+          return updatedVnd;
+        }
+        return v;
+      })
+    );
+
+    if (updatedVnd && isSupabaseConfigured()) {
+      syncVendorToSupabase(updatedVnd).catch((err) => {
+        console.error('Failed to sync vendor payment status to Supabase:', err);
+      });
+    }
+
+    // Also update payment record status if exists
+    setPayments((prev) =>
+      prev.map((p) =>
+        p.requestId === `ONBOARD-${vendorId}`
+          ? { ...p, status: clearingStatus === 'CLEARED' ? 'SUCCESS' : 'PENDING' }
+          : p
+      )
+    );
+
+    addAuditEntry(
+      'VENDOR_CHEQUE_STATUS_UPDATED',
+      'VENDOR',
+      vendorId,
+      `Vendor ${vendorId} cheque status marked as ${clearingStatus}`
+    );
+
+    showToast(
+      `Cheque status updated to ${clearingStatus === 'CLEARED' ? 'Cleared' : 'Pending Clearance'}`,
+      'success'
+    );
+    return true;
+  };
+
+  const addVendor = async (vendor: Vendor): Promise<boolean> => {
     setVendors((prev) => [vendor, ...prev]);
+    if (isSupabaseConfigured()) {
+      const res = await submitPartnerApplication(vendor);
+      if (!res.success) {
+        setVendors((prev) => prev.filter((v) => v.id !== vendor.id));
+        showToast(res.error || 'Failed to submit partner application.', 'error');
+        throw new Error(res.error || 'Failed to submit partner application.');
+      }
+      if (res.vendor) {
+        setVendors((prev) => prev.map((v) => (v.id === vendor.id ? res.vendor! : v)));
+      }
+    }
     addAuditEntry('VENDOR_REGISTERED', 'VENDOR', vendor.id, `Created vendor: ${vendor.businessName}`);
     showToast(`Registered new vendor partner ${vendor.businessName}`, 'success');
+    return true;
   };
 
   // VENDOR PORTAL ACTIONS (Role-protected & privacy-conscious)
@@ -2305,6 +2705,12 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     );
 
     showToast('Opportunity accepted! Full customer contact and address details unlocked.', 'success');
+
+    if (isSupabaseConfigured()) {
+      updateServiceRequestInSupabase(requestId, {
+        status: 'ACCEPTED'
+      }).catch((err) => console.error('Failed to sync vendor accept job to Supabase:', err));
+    }
   };
 
   const vendorRejectAssignment = (requestId: string, reason: string, notes?: string) => {
@@ -2347,6 +2753,14 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     );
 
     showToast('Assignment declined. Job returned to Operations Dispatch board.', 'info');
+
+    if (isSupabaseConfigured()) {
+      updateServiceRequestInSupabase(requestId, {
+        status: 'REASSIGNMENT REQUIRED',
+        assigned_to: null,
+        technician_notes: `Vendor declined: ${reason}. ${notes || ''}`
+      }).catch((err) => console.error('Failed to sync vendor reject job to Supabase:', err));
+    }
   };
 
   const vendorConfirmSchedule = (requestId: string, confirmedSlot: string, notes?: string) => {
@@ -2388,6 +2802,14 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     );
 
     showToast(`Schedule confirmed for ${confirmedSlot}`, 'success');
+
+    if (isSupabaseConfigured()) {
+      updateServiceRequestInSupabase(requestId, {
+        status: 'SCHEDULED',
+        vendor_scheduled_time: confirmedSlot,
+        technician_notes: notes || undefined
+      }).catch((err) => console.error('Failed to sync vendor schedule to Supabase:', err));
+    }
   };
 
   const vendorMarkArrived = (requestId: string) => {
@@ -2429,6 +2851,12 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     );
 
     showToast('Doorstep arrival confirmed!', 'success');
+
+    if (isSupabaseConfigured()) {
+      updateServiceRequestInSupabase(requestId, {
+        vendor_arrival_status: 'ARRIVED'
+      }).catch((err) => console.error('Failed to sync vendor arrival to Supabase:', err));
+    }
   };
 
   const vendorStartWork = (requestId: string, notes?: string) => {
@@ -2470,6 +2898,13 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     );
 
     showToast('Work started! Status updated to In Progress.', 'info');
+
+    if (isSupabaseConfigured()) {
+      updateServiceRequestInSupabase(requestId, {
+        status: 'IN PROGRESS',
+        work_started_at: new Date().toISOString()
+      }).catch((err) => console.error('Failed to sync vendor start work to Supabase:', err));
+    }
   };
 
   const vendorUploadCompletionPhotos = (requestId: string, photos: string[]) => {
@@ -2614,6 +3049,16 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     );
 
     showToast(`Job ${requestId} completed! Verified via customer OTP and payment of ₹${req.total} logged.`, 'success');
+
+    if (isSupabaseConfigured()) {
+      updateServiceRequestInSupabase(requestId, {
+        status: 'COMPLETED',
+        work_completed_at: new Date().toISOString(),
+        payment_status: 'PAID',
+        payment_method: paymentMode,
+        technician_notes: notes || undefined
+      }).catch((err) => console.error('Failed to sync vendor complete job to Supabase:', err));
+    }
   };
 
   // Employees
@@ -2626,14 +3071,31 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   const addEmployee = (emp: Employee) => {
     setEmployees((prev) => [emp, ...prev]);
+    if (isSupabaseConfigured()) {
+      syncEmployeeToSupabase(emp).catch((err) => {
+        console.error('Failed to sync employee to Supabase:', err);
+      });
+    }
     addAuditEntry('EMPLOYEE_ONBOARDED', 'EMPLOYEE', emp.id, `Created employee: ${emp.name} (Role: ${emp.role || 'Field Technician'})`);
     showToast(`Added technician employee ${emp.name}`, 'success');
   };
 
   const updateEmployee = (employeeId: string, updates: Partial<Employee>) => {
+    let updatedEmp: Employee | null = null;
     setEmployees((prev) =>
-      prev.map((e) => (e.id === employeeId ? { ...e, ...updates } : e))
+      prev.map((e) => {
+        if (e.id === employeeId) {
+          updatedEmp = { ...e, ...updates };
+          return updatedEmp;
+        }
+        return e;
+      })
     );
+    if (updatedEmp && isSupabaseConfigured()) {
+      syncEmployeeToSupabase(updatedEmp).catch((err) => {
+        console.error('Failed to sync updated employee to Supabase:', err);
+      });
+    }
     addAuditEntry(
       'EMPLOYEE_UPDATED',
       'EMPLOYEE',
@@ -2682,6 +3144,13 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     );
 
     showToast(`Job ${requestId} accepted! Route and customer details loaded.`, 'success');
+
+    if (isSupabaseConfigured()) {
+      updateServiceRequestInSupabase(requestId, {
+        status: 'ACCEPTED',
+        technician_notes: notes || undefined
+      }).catch((err) => console.error('Failed to sync employee accept job to Supabase:', err));
+    }
   };
 
   const employeeRejectJob = (requestId: string, reason: string, notes?: string) => {
@@ -2724,6 +3193,14 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     );
 
     showToast(`Job ${requestId} declined. Returned to Operations Assignment Board for reassignment.`, 'info');
+
+    if (isSupabaseConfigured()) {
+      updateServiceRequestInSupabase(requestId, {
+        status: 'REASSIGNMENT REQUIRED',
+        assigned_to: null,
+        technician_notes: `Declined: ${reason}. ${notes || ''}`
+      }).catch((err) => console.error('Failed to sync employee reject job to Supabase:', err));
+    }
   };
 
   const employeeMarkArrived = (requestId: string) => {
@@ -2765,6 +3242,12 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     );
 
     showToast('Doorstep arrival confirmed!', 'success');
+
+    if (isSupabaseConfigured()) {
+      updateServiceRequestInSupabase(requestId, {
+        vendor_arrival_status: 'ARRIVED'
+      }).catch((err) => console.error('Failed to sync doorstep arrival to Supabase:', err));
+    }
   };
 
   const employeeStartWork = (requestId: string, notes?: string) => {
@@ -2806,6 +3289,13 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     );
 
     showToast('Work started! Status updated to In Progress.', 'info');
+
+    if (isSupabaseConfigured()) {
+      updateServiceRequestInSupabase(requestId, {
+        status: 'IN PROGRESS',
+        work_started_at: new Date().toISOString()
+      }).catch((err) => console.error('Failed to sync start work to Supabase:', err));
+    }
   };
 
   const employeeCompleteWork = async (
@@ -2918,6 +3408,18 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     );
 
     showToast(`Job ${requestId} finalized! Verified via customer OTP and payment recorded.`, 'success');
+
+    if (isSupabaseConfigured()) {
+      updateServiceRequestInSupabase(requestId, {
+        status: 'COMPLETED',
+        work_completed_at: new Date().toISOString(),
+        payment_status: 'PAID',
+        payment_method: payMode,
+        technician_notes: completionNotes || undefined,
+        completion_photos: completionPhotos,
+        completion_notes: materialInfo || undefined
+      }).catch((err) => console.error('Failed to sync employee complete work to Supabase:', err));
+    }
   };
 
   // Projects
@@ -2946,12 +3448,28 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       timestamp: now
     };
 
-    setReviews((prev) => [newRev, ...prev]);
-    syncCustomerReviewToSupabase(newRev).catch((err: unknown) => console.warn('Supabase persist review notice:', err));
+    setReviews((prev) => [newRev, ...prev.filter((rv) => rv.requestId !== requestId)]);
     // update order
     setRequests((prev) =>
       prev.map((r) => (r.id === requestId ? { ...r, customerRating: rating, customerFeedback: feedback } : r))
     );
+
+    if (isSupabaseConfigured()) {
+      const currentNotes = req?.notes || '';
+      const payload = JSON.stringify({ rating, feedback });
+      const updatedNotes = currentNotes.includes('[CUSTOMER_REVIEW]:')
+        ? currentNotes.replace(/\[CUSTOMER_REVIEW\]:\s*\{.*\}/, `[CUSTOMER_REVIEW]: ${payload}`)
+        : currentNotes
+        ? `${currentNotes}\n[CUSTOMER_REVIEW]: ${payload}`
+        : `[CUSTOMER_REVIEW]: ${payload}`;
+
+      updateServiceRequestInSupabase(requestId, {
+        completion_notes: updatedNotes
+      }).catch((err) => console.error('Failed to sync review to service_requests in Supabase:', err));
+
+      syncCustomerReviewToSupabase(newRev).catch((err: unknown) => console.warn('Supabase persist review notice:', err));
+    }
+
     showToast(`Thank you! Your feedback for ${newRev.technicianName} was submitted.`, 'success');
   };
 
@@ -3089,6 +3607,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         opportunityLedger,
         adjustVendorOpportunities,
         updateVendorStatus,
+        approveVendorWithPayment,
+        updateVendorPaymentStatus,
         addVendor,
         currentVendorId,
         setCurrentVendorId,
@@ -3145,10 +3665,18 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         setSelectedDetailServiceId,
         isAuthModalOpen,
         setIsAuthModalOpen,
+        authModalMode,
+        setAuthModalMode,
+        openAuthModal,
+        authReturnTo,
+        setAuthReturnTo,
         closeAllModals,
         authProfile,
+        setAuthProfile,
         currentUser,
         setCurrentUser,
+        login,
+        logout,
         loginCustomer,
         registerCustomer,
         logoutCustomer,
@@ -3171,7 +3699,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         dbStatus,
         refreshDbConnection,
         isLoadingData,
-        dataLoadError
+        isAuthLoading,
+        dataLoadError,
+        reloadUserData
       }}
     >
       {children}

@@ -93,7 +93,7 @@ export const BecomePartnerPage: React.FC = () => {
     }
 
     try {
-      addVendor({
+      await addVendor({
         id: `vnd-${Date.now()}`,
         businessName,
         ownerName,

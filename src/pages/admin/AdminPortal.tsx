@@ -11,6 +11,7 @@ import { ComplaintResolveModal } from './ComplaintResolveModal';
 import { EmployeeModal } from './EmployeeModal';
 import { DatabaseConfigModal } from './DatabaseConfigModal';
 import { CreateStaffModal } from './CreateStaffModal';
+import { VendorApprovalModal } from './VendorApprovalModal';
 import {
   Database,
   ShieldCheck,
@@ -63,7 +64,11 @@ import {
   ArrowUpRight,
   PieChart,
   LogOut,
-  PhoneOff
+  PhoneOff,
+  Receipt,
+  Wallet,
+  Smartphone,
+  Building2
 } from 'lucide-react';
 import { adminReleasePhoneViaRpc } from '../../services/supabaseService';
 import {
@@ -129,7 +134,8 @@ export const AdminPortal: React.FC = () => {
     dbStatus,
     refreshDbConnection,
     showToast,
-    logoutStaff
+    logout,
+    authProfile
   } = useApp();
 
   // Active top-level tab
@@ -156,6 +162,13 @@ export const AdminPortal: React.FC = () => {
   const [releaseError, setReleaseError] = useState<string | null>(null);
   const [isDbModalOpen, setIsDbModalOpen] = useState(false);
   const [isCreateStaffModalOpen, setIsCreateStaffModalOpen] = useState(false);
+  const [staffModalDefaultRole, setStaffModalDefaultRole] = useState<'technician' | 'vendor' | 'ops_manager'>('technician');
+
+  // Vendor Approval & Payment Tracking Modal State
+  const [selectedApprovalVendor, setSelectedApprovalVendor] = useState<Vendor | null>(null);
+  const [approvalModalMode, setApprovalModalMode] = useState<'approve' | 'view'>('approve');
+  const [isApprovalModalOpen, setIsApprovalModalOpen] = useState(false);
+  const [paymentLedgerFilter, setPaymentLedgerFilter] = useState<'ALL' | 'ORDERS' | 'ONBOARDING'>('ALL');
 
   // Assignment Board Modal state
   const [boardModalTarget, setBoardModalTarget] = useState<{
@@ -335,7 +348,7 @@ export const AdminPortal: React.FC = () => {
                 Supervisor On Duty
               </span>
               <span className="text-xs font-black text-[#003523]">
-                Harman (Ops Lead · Sector 125)
+                {authProfile?.full_name || 'Harman'} ({authProfile?.role === 'admin' ? 'Administrator' : 'Operations Lead'})
               </span>
             </div>
             <button
@@ -349,7 +362,7 @@ export const AdminPortal: React.FC = () => {
               <span className="sm:hidden">Board</span>
             </button>
             <button
-              onClick={logoutStaff}
+              onClick={() => logout()}
               className="px-3 py-1.5 rounded-xl bg-red-50 hover:bg-red-100 text-red-700 border border-red-200 text-xs font-bold flex items-center space-x-1 transition-colors cursor-pointer"
               title="Sign Out of Operations Command"
             >
@@ -527,7 +540,7 @@ export const AdminPortal: React.FC = () => {
 
             <div className="pt-2 px-1 border-t border-[#c0c9c2]/30 mt-2">
               <button
-                onClick={logoutStaff}
+                onClick={() => logout()}
                 className="w-full flex items-center space-x-2.5 px-3 py-2 rounded-xl text-xs font-bold text-red-600 hover:bg-red-50 transition-colors cursor-pointer"
               >
                 <LogOut className="w-4 h-4 text-red-500" />
@@ -764,6 +777,38 @@ export const AdminPortal: React.FC = () => {
                   >
                     <UserCheck className="w-4 h-4 text-[#fe932c]" />
                     <span>Open Assignment Board</span>
+                  </button>
+                </div>
+              )}
+
+              {/* Vendor Partner Onboarding Payment Alert Banner */}
+              {pendingVendors.length > 0 && (
+                <div className="bg-gradient-to-r from-amber-50 to-orange-50 border border-amber-300 p-4 rounded-2xl flex flex-wrap items-center justify-between gap-3 shadow-xs">
+                  <div className="flex items-center space-x-3">
+                    <div className="p-2.5 bg-amber-500 text-white rounded-xl shadow-xs">
+                      <CreditCard className="w-5 h-5" />
+                    </div>
+                    <div>
+                      <div className="flex items-center space-x-2">
+                        <h3 className="font-extrabold text-sm text-amber-950">
+                          {pendingVendors.length} Trade Partner{pendingVendors.length > 1 ? 's' : ''} Awaiting Onboarding Payment Verification
+                        </h3>
+                        <span className="text-[10px] font-black bg-amber-200 text-amber-900 px-2 py-0.5 rounded-full border border-amber-300">
+                          Payment Required
+                        </span>
+                      </div>
+                      <p className="text-xs text-amber-800 mt-0.5">
+                        Approval requires recording plan subscription payment via Cash, Online (UPI/UTR), or Cheque to track revenue and release lead quotas.
+                      </p>
+                    </div>
+                  </div>
+
+                  <button
+                    onClick={() => setActiveAdminTab('vendors')}
+                    className="px-4 py-2 rounded-xl bg-[#003523] text-white text-xs font-bold shadow-xs hover:bg-[#144d37] flex items-center space-x-1.5 transition-colors cursor-pointer"
+                  >
+                    <span>Review & Collect Payments</span>
+                    <ArrowRight className="w-3.5 h-3.5 text-[#fe932c]" />
                   </button>
                 </div>
               )}
@@ -1378,12 +1423,24 @@ export const AdminPortal: React.FC = () => {
                     Opportunity deduction occurs upon manual supervisor dispatch. Zero fees charged upon customer booking.
                   </p>
                 </div>
-                {pendingVendors.length > 0 && (
-                  <span className="text-xs font-black px-3 py-1 rounded-full bg-amber-100 text-amber-900 border border-amber-300 flex items-center space-x-1.5 self-start sm:self-auto">
-                    <AlertCircle className="w-3.5 h-3.5 text-amber-700" />
-                    <span>{pendingVendors.length} Awaiting Operations Activation</span>
-                  </span>
-                )}
+                <div className="flex items-center space-x-2 shrink-0 self-start sm:self-auto">
+                  {pendingVendors.length > 0 && (
+                    <span className="text-xs font-black px-3 py-1 rounded-full bg-amber-100 text-amber-900 border border-amber-300 flex items-center space-x-1.5">
+                      <AlertCircle className="w-3.5 h-3.5 text-amber-700" />
+                      <span>{pendingVendors.length} Awaiting Operations Activation</span>
+                    </span>
+                  )}
+                  <button
+                    onClick={() => {
+                      setStaffModalDefaultRole('vendor');
+                      setIsCreateStaffModalOpen(true);
+                    }}
+                    className="px-4 py-2 rounded-xl bg-[#003523] hover:bg-[#144d37] text-white text-xs font-bold transition-all flex items-center space-x-1.5 cursor-pointer shadow-xs"
+                  >
+                    <Plus className="w-4 h-4 text-[#fe932c]" />
+                    <span>Add Vendor Partner</span>
+                  </button>
+                </div>
               </div>
 
               {/* PENDING VENDOR APPLICATIONS & ACTIVATION QUEUE */}
@@ -1468,11 +1525,15 @@ export const AdminPortal: React.FC = () => {
                             </button>
                             <button
                               type="button"
-                              onClick={() => updateVendorStatus(vnd.id, 'ACTIVE')}
+                              onClick={() => {
+                                setSelectedApprovalVendor(vnd);
+                                setApprovalModalMode('approve');
+                                setIsApprovalModalOpen(true);
+                              }}
                               className="px-3 py-1.5 rounded-lg bg-[#003523] hover:bg-[#144d37] text-white font-bold text-xs flex items-center space-x-1.5 shadow-xs transition-colors cursor-pointer"
                             >
-                              <CheckCircle2 className="w-3.5 h-3.5 text-[#b6efd1]" />
-                              <span>Confirm & Activate Profile</span>
+                              <CreditCard className="w-3.5 h-3.5 text-[#fe932c]" />
+                              <span>Collect Payment & Activate</span>
                             </button>
                           </div>
                         </div>
@@ -1489,6 +1550,7 @@ export const AdminPortal: React.FC = () => {
                       <th className="p-3">Business & Owner</th>
                       <th className="p-3">Categories & Hub</th>
                       <th className="p-3">Plan / Validity</th>
+                      <th className="p-3">Onboarding Payment</th>
                       <th className="p-3">Quota (Used / Total)</th>
                       <th className="p-3">Remaining Balance</th>
                       <th className="p-3">Status</th>
@@ -1521,6 +1583,51 @@ export const AdminPortal: React.FC = () => {
                           <td className="p-3">
                             <div className="font-mono text-xs font-bold">{vnd.plan.name} (₹{vnd.plan.price})</div>
                             <div className="text-[10px] text-[#707973]">Expires: {vnd.plan.expiryDate}</div>
+                          </td>
+                          {/* Onboarding Payment Status & Method */}
+                          <td className="p-3">
+                            {vnd.onboardingPayment ? (
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setSelectedApprovalVendor(vnd);
+                                  setApprovalModalMode('view');
+                                  setIsApprovalModalOpen(true);
+                                }}
+                                className="text-left group cursor-pointer"
+                                title="Click to view full financial audit receipt"
+                              >
+                                <div className="flex items-center space-x-1.5">
+                                  {vnd.onboardingPayment.method === 'CASH' && (
+                                    <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-emerald-100 text-emerald-800 border border-emerald-300 flex items-center space-x-1">
+                                      <Wallet className="w-3 h-3 text-emerald-700" />
+                                      <span>CASH · ₹{vnd.onboardingPayment.amount}</span>
+                                    </span>
+                                  )}
+                                  {vnd.onboardingPayment.method === 'ONLINE' && (
+                                    <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-blue-100 text-blue-800 border border-blue-300 flex items-center space-x-1">
+                                      <Smartphone className="w-3 h-3 text-blue-700" />
+                                      <span>ONLINE · ₹{vnd.onboardingPayment.amount}</span>
+                                    </span>
+                                  )}
+                                  {vnd.onboardingPayment.method === 'CHEQUE' && (
+                                    <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-purple-100 text-purple-800 border border-purple-300 flex items-center space-x-1">
+                                      <Building2 className="w-3 h-3 text-purple-700" />
+                                      <span>CHQ · ₹{vnd.onboardingPayment.amount}</span>
+                                    </span>
+                                  )}
+                                </div>
+                                <span className="text-[10px] font-mono text-gray-500 group-hover:underline block mt-0.5 truncate max-w-[120px]">
+                                  Ref: {vnd.onboardingPayment.transactionRef}
+                                </span>
+                              </button>
+                            ) : isPending ? (
+                              <span className="text-[10px] font-bold px-2 py-0.5 rounded bg-amber-100 text-amber-900 border border-amber-300">
+                                Payment Required
+                              </span>
+                            ) : (
+                              <span className="text-[10px] text-gray-400 font-mono">Legacy Verified</span>
+                            )}
                           </td>
                           <td className="p-3">
                             <div className="w-full bg-[#eaedff] rounded-full h-1.5 max-w-[90px] mb-1">
@@ -1563,25 +1670,46 @@ export const AdminPortal: React.FC = () => {
                                 <>
                                   <button
                                     onClick={() => updateVendorStatus(vnd.id, 'REJECTED')}
-                                    className="px-2 py-1.5 rounded-lg border border-red-200 text-red-700 hover:bg-red-50 font-bold text-xs"
+                                    className="px-2 py-1.5 rounded-lg border border-red-200 text-red-700 hover:bg-red-50 font-bold text-xs cursor-pointer"
                                   >
                                     Reject
                                   </button>
                                   <button
-                                    onClick={() => updateVendorStatus(vnd.id, 'ACTIVE')}
+                                    onClick={() => {
+                                      setSelectedApprovalVendor(vnd);
+                                      setApprovalModalMode('approve');
+                                      setIsApprovalModalOpen(true);
+                                    }}
                                     className="px-2.5 py-1.5 rounded-lg bg-[#003523] hover:bg-[#144d37] text-white font-bold text-xs flex items-center space-x-1 shadow-xs cursor-pointer"
                                   >
-                                    <CheckCircle2 className="w-3.5 h-3.5 text-[#b6efd1]" />
-                                    <span>Activate</span>
+                                    <CreditCard className="w-3.5 h-3.5 text-[#fe932c]" />
+                                    <span>Approve & Collect</span>
                                   </button>
                                 </>
                               ) : (
-                                <button
-                                  onClick={() => setLedgerVendorId(vnd.id)}
-                                  className="px-3 py-1.5 rounded-lg bg-[#003523] hover:bg-[#144d37] text-white font-bold text-xs cursor-pointer"
-                                >
-                                  Adjust Quota
-                                </button>
+                                <div className="flex items-center space-x-1">
+                                  {vnd.onboardingPayment && (
+                                    <button
+                                      type="button"
+                                      onClick={() => {
+                                        setSelectedApprovalVendor(vnd);
+                                        setApprovalModalMode('view');
+                                        setIsApprovalModalOpen(true);
+                                      }}
+                                      className="px-2 py-1.5 rounded-lg border border-emerald-300 bg-emerald-50 text-emerald-800 hover:bg-emerald-100 font-bold text-xs cursor-pointer flex items-center space-x-1"
+                                      title="View verified payment audit receipt"
+                                    >
+                                      <Receipt className="w-3.5 h-3.5 text-emerald-700" />
+                                      <span>Receipt</span>
+                                    </button>
+                                  )}
+                                  <button
+                                    onClick={() => setLedgerVendorId(vnd.id)}
+                                    className="px-3 py-1.5 rounded-lg bg-[#003523] hover:bg-[#144d37] text-white font-bold text-xs cursor-pointer"
+                                  >
+                                    Adjust Quota
+                                  </button>
+                                </div>
                               )}
                             </div>
                           </td>
@@ -1611,21 +1739,14 @@ export const AdminPortal: React.FC = () => {
                 </div>
                 <div className="flex items-center space-x-2 shrink-0 self-start sm:self-auto">
                   <button
-                    onClick={() => setIsCreateStaffModalOpen(true)}
+                    onClick={() => {
+                      setStaffModalDefaultRole('technician');
+                      setIsCreateStaffModalOpen(true);
+                    }}
                     className="px-4 py-2.5 rounded-xl bg-[#003523] hover:bg-[#144d37] text-white text-xs font-bold shadow-xs transition-all flex items-center justify-center space-x-2 cursor-pointer"
                   >
                     <UserPlus className="w-4 h-4 text-[#fe932c]" />
-                    <span>Provision Staff Account</span>
-                  </button>
-                  <button
-                    onClick={() => {
-                      setEditingEmployee(null);
-                      setIsEmployeeModalOpen(true);
-                    }}
-                    className="px-4 py-2.5 rounded-xl border border-[#003523] text-[#003523] hover:bg-[#003523]/5 text-xs font-bold transition-all flex items-center justify-center space-x-2 cursor-pointer"
-                  >
-                    <Plus className="w-4 h-4" />
-                    <span>Add Employee</span>
+                    <span>Add Employee / Staff</span>
                   </button>
                 </div>
               </div>
@@ -2252,10 +2373,54 @@ export const AdminPortal: React.FC = () => {
                 </div>
                 <button
                   onClick={() => setIsRecordPaymentOpen(true)}
-                  className="px-3.5 py-1.5 rounded-xl bg-[#003523] hover:bg-[#144d37] text-white text-xs font-bold shadow-xs flex items-center space-x-1"
+                  className="px-3.5 py-1.5 rounded-xl bg-[#003523] hover:bg-[#144d37] text-white text-xs font-bold shadow-xs flex items-center space-x-1 cursor-pointer"
                 >
                   <Plus className="w-3.5 h-3.5" />
                   <span>Record Payment</span>
+                </button>
+              </div>
+
+              {/* Payment Type Filters */}
+              <div className="flex flex-wrap items-center gap-2 pt-1">
+                <button
+                  type="button"
+                  onClick={() => setPaymentLedgerFilter('ALL')}
+                  className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer ${
+                    paymentLedgerFilter === 'ALL'
+                      ? 'bg-[#003523] text-white shadow-xs'
+                      : 'bg-gray-100 hover:bg-gray-200 text-gray-700'
+                  }`}
+                >
+                  All Transactions ({payments.length})
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setPaymentLedgerFilter('ONBOARDING')}
+                  className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center space-x-1.5 ${
+                    paymentLedgerFilter === 'ONBOARDING'
+                      ? 'bg-purple-800 text-white shadow-xs'
+                      : 'bg-purple-50 hover:bg-purple-100 text-purple-900 border border-purple-200'
+                  }`}
+                >
+                  <Building2 className="w-3.5 h-3.5" />
+                  <span>
+                    Vendor Onboarding Fees (
+                    {payments.filter((p) => p.paymentType === 'VENDOR_ONBOARDING' || p.requestId.startsWith('ONBOARD-')).length}
+                    )
+                  </span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setPaymentLedgerFilter('ORDERS')}
+                  className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer ${
+                    paymentLedgerFilter === 'ORDERS'
+                      ? 'bg-[#003523] text-white shadow-xs'
+                      : 'bg-gray-100 hover:bg-gray-200 text-gray-700'
+                  }`}
+                >
+                  Service Bookings (
+                  {payments.filter((p) => p.paymentType !== 'VENDOR_ONBOARDING' && !p.requestId.startsWith('ONBOARD-')).length}
+                  )
                 </button>
               </div>
 
@@ -2264,8 +2429,8 @@ export const AdminPortal: React.FC = () => {
                   <thead>
                     <tr className="border-b border-[#c0c9c2]/50 bg-[#faf8ff] text-[#404943] font-bold">
                       <th className="p-3">Receipt / Ref</th>
-                      <th className="p-3">Order ID</th>
-                      <th className="p-3">Customer</th>
+                      <th className="p-3">Reference / Order</th>
+                      <th className="p-3">Payer / Entity</th>
                       <th className="p-3">Amount</th>
                       <th className="p-3">Channel / Mode</th>
                       <th className="p-3">Collected By</th>
@@ -2274,22 +2439,65 @@ export const AdminPortal: React.FC = () => {
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-[#c0c9c2]/30">
-                    {payments.map((pay) => (
-                      <tr key={pay.id} className="hover:bg-[#faf8ff]">
-                        <td className="p-3 font-mono font-bold text-[#131b2e]">{pay.transactionRef}</td>
-                        <td className="p-3 font-mono font-bold text-[#003523]">#{pay.requestId}</td>
-                        <td className="p-3 font-extrabold text-[#131b2e]">{pay.customerName}</td>
-                        <td className="p-3 font-mono font-black text-sm text-[#003523]">₹{pay.amount}</td>
-                        <td className="p-3 font-bold text-[#404943]">{pay.mode}</td>
-                        <td className="p-3 text-[#707973]">{pay.collectedBy}</td>
-                        <td className="p-3 font-mono text-[11px] text-[#707973]">{pay.date}</td>
-                        <td className="p-3">
-                          <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-[#c0edd3] text-[#003523]">
-                            {pay.status}
-                          </span>
-                        </td>
-                      </tr>
-                    ))}
+                    {payments
+                      .filter((p) => {
+                        const isVendorOnboarding = p.paymentType === 'VENDOR_ONBOARDING' || p.requestId.startsWith('ONBOARD-');
+                        if (paymentLedgerFilter === 'ORDERS') return !isVendorOnboarding;
+                        if (paymentLedgerFilter === 'ONBOARDING') return isVendorOnboarding;
+                        return true;
+                      })
+                      .map((pay) => {
+                        const isOnboarding = pay.paymentType === 'VENDOR_ONBOARDING' || pay.requestId.startsWith('ONBOARD-');
+                        return (
+                          <tr key={pay.id} className={isOnboarding ? 'bg-purple-50/30 hover:bg-purple-50/60' : 'hover:bg-[#faf8ff]'}>
+                            <td className="p-3">
+                              <span className="font-mono font-bold text-[#131b2e] block">{pay.transactionRef}</span>
+                              {pay.notes && (
+                                <span className="text-[10px] text-gray-500 italic block truncate max-w-[140px]" title={pay.notes}>
+                                  {pay.notes}
+                                </span>
+                              )}
+                            </td>
+                            <td className="p-3">
+                              <span className="font-mono font-bold text-[#003523] block">#{pay.requestId}</span>
+                              {isOnboarding ? (
+                                <span className="text-[9px] font-bold px-1.5 py-0.2 rounded bg-purple-100 text-purple-800 border border-purple-200 uppercase">
+                                  Vendor Onboarding
+                                </span>
+                              ) : (
+                                <span className="text-[9px] text-gray-500">Service Booking</span>
+                              )}
+                            </td>
+                            <td className="p-3 font-extrabold text-[#131b2e]">{pay.customerName}</td>
+                            <td className="p-3 font-mono font-black text-sm text-[#003523]">₹{pay.amount}</td>
+                            <td className="p-3">
+                              <span className="font-bold text-[#404943] flex items-center space-x-1">
+                                {pay.mode === 'CASH' && <Wallet className="w-3 h-3 text-emerald-700" />}
+                                {pay.mode === 'CHEQUE' && <Building2 className="w-3 h-3 text-purple-700" />}
+                                {(pay.mode === 'ONLINE' || pay.mode === 'UPI' || pay.mode === 'ONLINE_CARD' || pay.mode === 'NET_BANKING') && (
+                                  <Smartphone className="w-3 h-3 text-blue-700" />
+                                )}
+                                <span>{pay.mode}</span>
+                              </span>
+                            </td>
+                            <td className="p-3 text-[#707973]">{pay.collectedBy}</td>
+                            <td className="p-3 font-mono text-[11px] text-[#707973]">{pay.date}</td>
+                            <td className="p-3">
+                              <span
+                                className={`px-2 py-0.5 rounded text-[10px] font-bold ${
+                                  pay.status === 'SUCCESS'
+                                    ? 'bg-[#c0edd3] text-[#003523]'
+                                    : pay.status === 'PENDING'
+                                    ? 'bg-amber-100 text-amber-900 border border-amber-300'
+                                    : 'bg-red-100 text-red-800'
+                                }`}
+                              >
+                                {pay.status}
+                              </span>
+                            </td>
+                          </tr>
+                        );
+                      })}
                   </tbody>
                 </table>
               </div>
@@ -2623,6 +2831,7 @@ export const AdminPortal: React.FC = () => {
       <CreateStaffModal
         isOpen={isCreateStaffModalOpen}
         onClose={() => setIsCreateStaffModalOpen(false)}
+        defaultRole={staffModalDefaultRole}
       />
 
       {/* 11. Release Mobile Number Modal (Admin Only, Audit Logged) */}
@@ -2716,6 +2925,19 @@ export const AdminPortal: React.FC = () => {
             </form>
           </div>
         </div>
+      )}
+
+      {/* 12. Vendor Approval & Payment Tracking Modal */}
+      {isApprovalModalOpen && selectedApprovalVendor && (
+        <VendorApprovalModal
+          vendor={selectedApprovalVendor}
+          isOpen={isApprovalModalOpen}
+          mode={approvalModalMode}
+          onClose={() => {
+            setIsApprovalModalOpen(false);
+            setSelectedApprovalVendor(null);
+          }}
+        />
       )}
     </div>
   );

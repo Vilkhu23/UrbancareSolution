@@ -13,7 +13,7 @@ import { ShieldCheck, Phone, MapPin, Mail, ArrowRight, MessageCircle } from 'luc
 export const Footer: React.FC = () => {
   const {
     setCurrentPage,
-    setIsAuthModalOpen,
+    openAuthModal,
     setIsDPDPNoticeOpen,
     setIsDPDPConsentManagerOpen,
     setIsDPDPDataRightsOpen
@@ -162,10 +162,10 @@ export const Footer: React.FC = () => {
               </li>
               <li className="pt-2">
                 <button
-                  onClick={() => setIsAuthModalOpen(true)}
+                  onClick={() => openAuthModal('login')}
                   className="text-emerald-300 hover:text-white text-[11px] font-medium flex items-center space-x-1 underline cursor-pointer"
                 >
-                  <span>Partner login</span>
+                  <span>Staff & partner login</span>
                   <ArrowRight className="w-3 h-3" />
                 </button>
               </li>

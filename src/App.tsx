@@ -41,13 +41,11 @@ const AppContent: React.FC = () => {
   const {
     currentPage,
     setCurrentPage,
-    currentRole,
     authProfile,
-    currentEmployeeId,
-    currentVendorId,
     toasts,
     dismissToast,
-    setIsAuthModalOpen
+    isAuthLoading,
+    openAuthModal
   } = useApp();
 
   // Detect Supabase password recovery token or query param on URL
@@ -60,7 +58,26 @@ const AppContent: React.FC = () => {
     }
   }, [setCurrentPage]);
 
+  // Auto-prompt unified login when an unauthenticated user visits protected portals
+  React.useEffect(() => {
+    if (!isAuthLoading && !authProfile && ['admin', 'vendor', 'employee'].includes(currentPage)) {
+      openAuthModal('login', currentPage);
+    }
+  }, [isAuthLoading, authProfile, currentPage, openAuthModal]);
+
   const renderCurrentPage = () => {
+    // If refreshing on a staff or customer portal, wait for Supabase auth to restore
+    if (isAuthLoading && ['admin', 'vendor', 'employee', 'account'].includes(currentPage)) {
+      return (
+        <div className="min-h-[60vh] flex items-center justify-center">
+          <div className="flex flex-col items-center space-y-3 p-8 bg-white/90 rounded-2xl border border-emerald-100 shadow-sm">
+            <div className="w-8 h-8 border-3 border-[#003523] border-t-transparent rounded-full animate-spin" />
+            <span className="text-xs font-semibold text-[#003523]">Restoring verified workspace...</span>
+          </div>
+        </div>
+      );
+    }
+
     switch (currentPage) {
       case 'services':
         return <ServicesPage />;
@@ -94,28 +111,28 @@ const AppContent: React.FC = () => {
             />
           );
         }
-        if (currentRole !== 'operations' && currentRole !== 'admin') {
+        if (!authProfile) {
           return (
             <div className="max-w-md mx-auto my-16 p-8 bg-white rounded-2xl border border-red-200 shadow-xl text-center space-y-4 animate-scaleUp">
               <div className="w-14 h-14 bg-red-100 text-red-700 rounded-2xl flex items-center justify-center mx-auto shadow-inner">
                 <AlertCircle className="w-7 h-7" />
               </div>
-              <h2 className="text-lg font-bold text-[#131b2e]">Login Required — Operations Command</h2>
+              <h2 className="text-lg font-bold text-[#131b2e]">Sign In Required — Operations Command</h2>
               <p className="text-xs text-[#707973] leading-relaxed">
-                This portal is strictly restricted to verified Operations Supervisors. Valid supervisor authentication is required to access dispatch records and system administration.
+                This portal is strictly restricted to verified Operations Supervisors. Valid authentication is required to access dispatch records and system administration.
               </p>
               <div className="pt-2 flex flex-col sm:flex-row items-center justify-center gap-2">
                 <button
                   onClick={() => setCurrentPage('home')}
-                  className="w-full sm:w-auto px-4 py-2.5 rounded-xl bg-gray-100 hover:bg-gray-200 text-[#131b2e] text-xs font-semibold transition-colors"
+                  className="w-full sm:w-auto px-4 py-2.5 rounded-xl bg-gray-100 hover:bg-gray-200 text-[#131b2e] text-xs font-semibold transition-colors cursor-pointer"
                 >
                   Return to Home
                 </button>
                 <button
-                  onClick={() => setIsAuthModalOpen(true)}
+                  onClick={() => openAuthModal('login', 'admin')}
                   className="w-full sm:w-auto px-4 py-2.5 rounded-xl bg-[#003523] hover:bg-[#144d37] text-white text-xs font-bold transition-all shadow-xs cursor-pointer"
                 >
-                  Sign In to Operations
+                  Sign in
                 </button>
               </div>
             </div>
@@ -132,28 +149,28 @@ const AppContent: React.FC = () => {
             />
           );
         }
-        if (currentRole !== 'vendor') {
+        if (!authProfile) {
           return (
             <div className="max-w-md mx-auto my-16 p-8 bg-white rounded-2xl border border-amber-200 shadow-xl text-center space-y-4 animate-scaleUp">
               <div className="w-14 h-14 bg-amber-100 text-amber-700 rounded-2xl flex items-center justify-center mx-auto shadow-inner">
                 <AlertCircle className="w-7 h-7" />
               </div>
-              <h2 className="text-lg font-bold text-[#131b2e]">Login Required — Trade Partner Network</h2>
+              <h2 className="text-lg font-bold text-[#131b2e]">Sign In Required — Trade Partner Network</h2>
               <p className="text-xs text-[#707973] leading-relaxed">
                 This portal is strictly restricted to verified Vendor Partners. Valid partner authentication is required to view assigned jobs and trade financial ledgers.
               </p>
               <div className="pt-2 flex flex-col sm:flex-row items-center justify-center gap-2">
                 <button
                   onClick={() => setCurrentPage('home')}
-                  className="w-full sm:w-auto px-4 py-2.5 rounded-xl bg-gray-100 hover:bg-gray-200 text-[#131b2e] text-xs font-semibold transition-colors"
+                  className="w-full sm:w-auto px-4 py-2.5 rounded-xl bg-gray-100 hover:bg-gray-200 text-[#131b2e] text-xs font-semibold transition-colors cursor-pointer"
                 >
                   Return to Home
                 </button>
                 <button
-                  onClick={() => setIsAuthModalOpen(true)}
+                  onClick={() => openAuthModal('login', 'vendor')}
                   className="w-full sm:w-auto px-4 py-2.5 rounded-xl bg-[#003523] hover:bg-[#144d37] text-white text-xs font-bold transition-all shadow-xs cursor-pointer"
                 >
-                  Sign In as Partner
+                  Sign in
                 </button>
               </div>
             </div>
@@ -170,32 +187,32 @@ const AppContent: React.FC = () => {
           return (
             <NotAuthorizedPage
               requiredRoleName="Field Technician"
-              portalName="Staff Technician Hub"
+              portalName="Technician Portal"
             />
           );
         }
-        if (currentRole !== 'employee' && currentRole !== 'technician') {
+        if (!authProfile) {
           return (
             <div className="max-w-md mx-auto my-16 p-8 bg-white rounded-2xl border border-blue-200 shadow-xl text-center space-y-4 animate-scaleUp">
               <div className="w-14 h-14 bg-blue-100 text-blue-700 rounded-2xl flex items-center justify-center mx-auto shadow-inner">
                 <AlertCircle className="w-7 h-7" />
               </div>
-              <h2 className="text-lg font-bold text-[#131b2e]">Login Required — Staff Technician Hub</h2>
+              <h2 className="text-lg font-bold text-[#131b2e]">Sign In Required — Technician Portal</h2>
               <p className="text-xs text-[#707973] leading-relaxed">
                 This portal is strictly restricted to Field Technicians. Valid staff authentication is required to access assigned work orders and customer tickets.
               </p>
               <div className="pt-2 flex flex-col sm:flex-row items-center justify-center gap-2">
                 <button
                   onClick={() => setCurrentPage('home')}
-                  className="w-full sm:w-auto px-4 py-2.5 rounded-xl bg-gray-100 hover:bg-gray-200 text-[#131b2e] text-xs font-semibold transition-colors"
+                  className="w-full sm:w-auto px-4 py-2.5 rounded-xl bg-gray-100 hover:bg-gray-200 text-[#131b2e] text-xs font-semibold transition-colors cursor-pointer"
                 >
                   Return to Home
                 </button>
                 <button
-                  onClick={() => setIsAuthModalOpen(true)}
+                  onClick={() => openAuthModal('login', 'employee')}
                   className="w-full sm:w-auto px-4 py-2.5 rounded-xl bg-[#003523] hover:bg-[#144d37] text-white text-xs font-bold transition-all shadow-xs cursor-pointer"
                 >
-                  Sign In as Technician
+                  Sign in
                 </button>
               </div>
             </div>
@@ -210,23 +227,32 @@ const AppContent: React.FC = () => {
 
   return (
     <div className="min-h-screen flex flex-col bg-[#faf8ff] text-[#131b2e] selection:bg-[#b6efd1] selection:text-[#002114]">
-      {/* Toast Notification Container */}
-      <div className="fixed top-14 right-4 z-50 flex flex-col space-y-2 pointer-events-none max-w-sm w-full">
+      {/* Toast Notification Container - Highest z-index so alerts are visible above all dialogs, backdrops, and modals */}
+      <div className="fixed top-4 sm:top-5 right-4 left-4 sm:left-auto sm:right-6 z-[9999] flex flex-col space-y-2 pointer-events-none max-w-sm sm:w-full">
         {toasts.map((toast) => (
           <div
             key={toast.id}
-            className="pointer-events-auto bg-[#131b2e] text-white px-4 py-3 rounded-xl shadow-xl flex items-center justify-between text-xs font-semibold border border-white/10 animate-slideIn"
+            className={`pointer-events-auto text-white px-4 py-3 rounded-xl shadow-2xl flex items-center justify-between text-xs font-semibold border transition-all animate-slideIn ${
+              toast.type === 'error'
+                ? 'bg-[#1e1313] border-red-500/50 shadow-red-900/20 ring-1 ring-red-500/30'
+                : toast.type === 'warning'
+                ? 'bg-[#1f1911] border-amber-500/50 shadow-amber-900/20 ring-1 ring-amber-500/30'
+                : toast.type === 'success'
+                ? 'bg-[#0f1f18] border-emerald-500/50 shadow-emerald-900/20 ring-1 ring-emerald-500/30'
+                : 'bg-[#131b2e] border-white/20'
+            }`}
           >
-            <div className="flex items-center space-x-2">
-              {toast.type === 'success' && <CheckCircle2 className="w-4 h-4 text-[#b6efd1]" />}
-              {toast.type === 'error' && <AlertCircle className="w-4 h-4 text-[#ffdad6]" />}
-              {toast.type === 'warning' && <AlertTriangle className="w-4 h-4 text-[#ffdcc3]" />}
-              {(!toast.type || toast.type === 'info') && <Info className="w-4 h-4 text-[#85bda1]" />}
-              <span>{toast.text}</span>
+            <div className="flex items-center space-x-2.5">
+              {toast.type === 'success' && <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />}
+              {toast.type === 'error' && <AlertCircle className="w-4 h-4 text-red-400 shrink-0" />}
+              {toast.type === 'warning' && <AlertTriangle className="w-4 h-4 text-amber-400 shrink-0" />}
+              {(!toast.type || toast.type === 'info') && <Info className="w-4 h-4 text-sky-400 shrink-0" />}
+              <span className="leading-snug">{toast.text}</span>
             </div>
             <button
               onClick={() => dismissToast(toast.id)}
-              className="p-1 text-gray-400 hover:text-white"
+              className="p-1 text-gray-400 hover:text-white shrink-0 ml-2 cursor-pointer"
+              aria-label="Dismiss notification"
             >
               <X className="w-3.5 h-3.5" />
             </button>

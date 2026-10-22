@@ -16,6 +16,7 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({ isOpen, 
   const [mode, setMode] = useState<'UPI' | 'CASH' | 'ONLINE_CARD'>('UPI');
   const [transactionRef, setTransactionRef] = useState(`UPI-${Date.now().toString().slice(-8)}`);
   const [collectedBy, setCollectedBy] = useState('Harman (Ops Lead)');
+  const [isSubmitting, setIsSubmitting] = useState(false);
 
   if (!isOpen) return null;
 
@@ -31,18 +32,25 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({ isOpen, 
     }
   };
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    recordPayment({
-      requestId: requestId || 'PB-MANUAL',
-      customerName: customerName || 'Direct Customer',
-      amount: Number(amount),
-      mode,
-      transactionRef: transactionRef || `TXN-${Date.now()}`,
-      collectedBy,
-      status: 'SUCCESS'
-    });
-    onClose();
+    setIsSubmitting(true);
+    try {
+      const ok = await recordPayment({
+        requestId: requestId || 'PB-MANUAL',
+        customerName: customerName || 'Direct Customer',
+        amount: Number(amount),
+        mode,
+        transactionRef: transactionRef || `TXN-${Date.now()}`,
+        collectedBy,
+        status: 'SUCCESS'
+      });
+      if (ok !== false) {
+        onClose();
+      }
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
   return (
@@ -149,10 +157,11 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({ isOpen, 
             </button>
             <button
               type="submit"
-              className="px-5 py-2 rounded-xl bg-[#003523] hover:bg-[#144d37] text-white font-bold shadow-xs flex items-center space-x-1.5"
+              disabled={isSubmitting}
+              className="px-5 py-2 rounded-xl bg-[#003523] hover:bg-[#144d37] text-white font-bold shadow-xs flex items-center space-x-1.5 disabled:opacity-50"
             >
               <CheckCircle2 className="w-4 h-4 text-[#fe932c]" />
-              <span>Record & Reconcile</span>
+              <span>{isSubmitting ? 'Recording...' : 'Record & Reconcile'}</span>
             </button>
           </div>
         </form>

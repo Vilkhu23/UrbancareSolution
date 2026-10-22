@@ -5,7 +5,17 @@ import { validatePassword } from '../utils/authValidation';
 import { Lock, Eye, EyeOff, CheckCircle2, AlertCircle, ArrowRight, ShieldCheck } from 'lucide-react';
 
 export const ResetPasswordPage: React.FC = () => {
-  const { showToast, setCurrentPage } = useApp();
+  const {
+    showToast,
+    setCurrentPage,
+    authProfile,
+    setAuthProfile,
+    setCurrentRole,
+    employees,
+    vendors,
+    setCurrentEmployeeId,
+    setCurrentVendorId,
+  } = useApp();
 
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
@@ -14,6 +24,8 @@ export const ResetPasswordPage: React.FC = () => {
   const [loading, setLoading] = useState(false);
   const [isSuccess, setIsSuccess] = useState(false);
   const [hasRecoverySession, setHasRecoverySession] = useState<boolean | null>(null);
+  const [targetDestination, setTargetDestination] = useState<string>('home');
+  const [destinationLabel, setDestinationLabel] = useState<string>('Home');
 
   // Check if there is an active recovery session
   useEffect(() => {
@@ -52,21 +64,99 @@ export const ResetPasswordPage: React.FC = () => {
 
     setLoading(true);
     try {
-      const { error } = await supabase.auth.updateUser({
+      const { data: updateData, error: updateError } = await supabase.auth.updateUser({
         password,
       });
 
-      if (error) {
-        showToast(error.message || 'Failed to update password. Please request a new reset link.', 'error');
+      if (updateError) {
+        showToast(updateError.message || 'Failed to update password. Please request a new reset link.', 'error');
         setLoading(false);
         return;
       }
 
+      // Determine the authenticated user ID
+      let userId = updateData?.user?.id || authProfile?.id;
+      if (!userId) {
+        const { data: userData } = await supabase.auth.getUser();
+        userId = userData?.user?.id;
+      }
+
+      let destPage = 'home';
+      let destLabel = 'Home';
+
+      if (userId) {
+        // Clear must_change_password flag in the database profiles table
+        const { error: profileUpdateError } = await supabase
+          .from('profiles')
+          .update({
+            must_change_password: false,
+            updated_at: new Date().toISOString(),
+          })
+          .eq('id', userId);
+
+        if (profileUpdateError) {
+          console.error('[ResetPasswordPage] Failed to clear must_change_password in profiles:', profileUpdateError);
+        }
+
+        // Fetch fresh profile state to ensure accurate role & clear local must_change_password
+        const { data: freshProfile } = await supabase
+          .from('profiles')
+          .select('*')
+          .eq('id', userId)
+          .maybeSingle();
+
+        const activeProfile = freshProfile || (authProfile ? { ...authProfile, must_change_password: false } : null);
+
+        if (activeProfile) {
+          setAuthProfile(activeProfile);
+
+          if (activeProfile.role === 'technician') {
+            destPage = 'employee';
+            destLabel = 'Technician Hub';
+            setCurrentRole('employee');
+            const matchedEmp = employees.find((e) => e.user_id === activeProfile.id || e.id === activeProfile.id);
+            if (matchedEmp) setCurrentEmployeeId(matchedEmp.id);
+          } else if (activeProfile.role === 'vendor') {
+            destPage = 'vendor';
+            destLabel = 'Partner Portal';
+            setCurrentRole('vendor');
+            const matchedVnd = vendors.find((v) => v.user_id === activeProfile.id || v.id === activeProfile.id);
+            if (matchedVnd) setCurrentVendorId(matchedVnd.id);
+          } else if (activeProfile.role === 'admin' || activeProfile.role === 'ops_manager') {
+            destPage = 'admin';
+            destLabel = 'Operations Hub';
+            setCurrentRole('operations');
+          } else {
+            destPage = 'home';
+            destLabel = 'Home';
+            setCurrentRole('customer');
+          }
+        }
+      } else if (authProfile) {
+        setAuthProfile({ ...authProfile, must_change_password: false });
+        if (authProfile.role === 'technician') {
+          destPage = 'employee';
+          destLabel = 'Technician Hub';
+          setCurrentRole('employee');
+        } else if (authProfile.role === 'vendor') {
+          destPage = 'vendor';
+          destLabel = 'Partner Portal';
+          setCurrentRole('vendor');
+        } else if (authProfile.role === 'admin' || authProfile.role === 'ops_manager') {
+          destPage = 'admin';
+          destLabel = 'Operations Hub';
+          setCurrentRole('operations');
+        }
+      }
+
+      setTargetDestination(destPage);
+      setDestinationLabel(destLabel);
       setIsSuccess(true);
       showToast('Your password has been successfully updated.', 'success');
+
       setTimeout(() => {
-        setCurrentPage('home');
-      }, 2500);
+        setCurrentPage(destPage);
+      }, 2000);
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : 'An error occurred while updating password';
       showToast(msg, 'error');
@@ -99,14 +189,14 @@ export const ResetPasswordPage: React.FC = () => {
               </div>
               <h2 className="text-lg font-bold text-[#131b2e]">Password Reset Complete!</h2>
               <p className="text-xs text-[#707973] leading-relaxed">
-                Your password has been securely updated in the database. Redirecting you to home...
+                Your password has been securely updated and temporary credentials cleared. Redirecting you to {destinationLabel}...
               </p>
               <button
                 type="button"
-                onClick={() => setCurrentPage('home')}
+                onClick={() => setCurrentPage(targetDestination)}
                 className="w-full py-3 rounded-xl bg-[#003523] hover:bg-[#144d37] text-white text-xs font-bold transition-all shadow-xs"
               >
-                Go to Home Now
+                Go to {destinationLabel} Now
               </button>
             </div>
           ) : hasRecoverySession === false ? (

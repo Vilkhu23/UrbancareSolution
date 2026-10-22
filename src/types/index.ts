@@ -255,17 +255,32 @@ export interface ComplaintRecord {
   resolvedAt?: string;
 }
 
+export interface VendorOnboardingPayment {
+  method: 'CASH' | 'ONLINE' | 'CHEQUE';
+  amount: number;
+  transactionRef: string; // UTR / Txn ID for online, Receipt No. for cash, Cheque No. for cheque
+  bankName?: string;     // Issuing bank for cheque or bank transfer
+  chequeDate?: string;   // Date on cheque
+  chequeClearingStatus?: 'CLEARED' | 'PENDING_CLEARANCE';
+  paidAt: string;
+  collectedBy: string;
+  receiptNumber?: string;
+  notes?: string;
+}
+
 export interface PaymentRecord {
   id: string;
   user_id?: string;
   requestId: string;
   customerName: string;
   amount: number;
-  mode: 'UPI' | 'CASH' | 'ONLINE_CARD' | 'NET_BANKING';
+  mode: 'UPI' | 'CASH' | 'ONLINE_CARD' | 'NET_BANKING' | 'CHEQUE' | 'ONLINE';
   status: 'SUCCESS' | 'PENDING' | 'REFUNDED' | 'DISPUTED';
   transactionRef: string;
   collectedBy: string;
   date: string;
+  paymentType?: 'SERVICE_BOOKING' | 'VENDOR_ONBOARDING';
+  notes?: string;
 }
 
 export interface OpsSettings {
@@ -303,7 +318,9 @@ export interface Vendor {
     remainingOpportunities: number;
     validityDays: number;
     expiryDate: string;
+    onboardingPayment?: VendorOnboardingPayment;
   };
+  onboardingPayment?: VendorOnboardingPayment;
   activeJobs: number;
   completedJobs: number;
   rating: number;
@@ -340,6 +357,7 @@ export interface Employee {
   joinedDate: string;
   role?: string;
   employeeCode?: string;
+  email?: string;
 }
 
 export interface HomeProjectRequest {

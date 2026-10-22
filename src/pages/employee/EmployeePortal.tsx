@@ -52,8 +52,7 @@ export const EmployeePortal: React.FC = () => {
     employeeStartWork,
     employeeCompleteWork,
     updateEmployeeAvailability,
-    loginStaff,
-    logoutStaff,
+    logout,
     showToast,
     isLoadingData,
     dataLoadError
@@ -64,13 +63,6 @@ export const EmployeePortal: React.FC = () => {
   const [selectedJobForReject, setSelectedJobForReject] = useState<ServiceRequest | null>(null);
   const [selectedJobForComplete, setSelectedJobForComplete] = useState<ServiceRequest | null>(null);
   const [zoomPhotoUrl, setZoomPhotoUrl] = useState<string | null>(null);
-
-  // Authentication State for Role Gate
-  const [selectedEmployeeForLogin, setSelectedEmployeeForLogin] = useState<string>(
-    currentEmployeeId || ''
-  );
-  const [loginPassword, setLoginPassword] = useState<string>('');
-  const [showLoginPassword, setShowLoginPassword] = useState<boolean>(false);
 
   // Currently authenticated employee (matched by user_id or active ID)
   const currentEmployee = useMemo(() => {
@@ -113,13 +105,17 @@ export const EmployeePortal: React.FC = () => {
     );
   }, [myAssignedRequests]);
 
-  // 3. Active Jobs: Currently in progress or arrived on site
+  // 3. Active Jobs: Currently in progress or arrived on site (excluding completed/cancelled)
   const activeJobs = useMemo(() => {
     return myAssignedRequests.filter(
       (r) =>
-        r.status === 'IN PROGRESS' ||
-        r.status === 'ACCEPTED' ||
-        r.vendorArrivalStatus === 'ARRIVED'
+        r.status !== 'COMPLETED' &&
+        r.status !== 'CUSTOMER CONFIRMED' &&
+        r.status !== 'CLOSED' &&
+        r.status !== 'CANCELLED' &&
+        (r.status === 'IN PROGRESS' ||
+         r.status === 'ACCEPTED' ||
+         r.vendorArrivalStatus === 'ARRIVED')
     );
   }, [myAssignedRequests]);
 
@@ -143,165 +139,7 @@ export const EmployeePortal: React.FC = () => {
     return myNotifications.filter((n) => !n.read).length;
   }, [myNotifications]);
 
-  // Handle Login Authentication with Mandatory Password
-  const handleEmployeeLogin = (e: React.FormEvent) => {
-    e.preventDefault();
-    const emp = employees.find((e) => e.id === selectedEmployeeForLogin);
-    if (!emp) {
-      showToast('Please select a technician profile', 'error');
-      return;
-    }
 
-    if (!loginPassword.trim()) {
-      showToast('Please enter your technician password to continue', 'error');
-      return;
-    }
-
-    const success = loginStaff('employee', emp.id, loginPassword);
-    if (success) {
-      // loginStaff in AppContext sets role, employeeId, and page
-      setLoginPassword('');
-    }
-  };
-
-  // If role is not 'employee', render the Role-Protection Authentication Gate!
-  if (currentRole !== 'employee') {
-    return (
-      <div className="min-h-[85vh] bg-gradient-to-b from-[#f4fbf7] via-[#faf8ff] to-[#f2f3ff] py-12 px-4 flex items-center justify-center">
-        <div className="max-w-md w-full bg-white rounded-3xl shadow-xl border border-gray-200 overflow-hidden">
-          {/* Header */}
-          <div className="p-8 bg-[#003523] text-white text-center relative">
-            <div className="w-16 h-16 rounded-2xl bg-[#fe932c] text-[#002114] flex items-center justify-center mx-auto mb-4 font-black text-2xl shadow-lg">
-              <HardHat className="w-8 h-8" />
-            </div>
-            <h2 className="text-xl font-bold tracking-tight">UrbanCare Solution Staff Technician Hub</h2>
-            <p className="text-xs text-gray-200 mt-1">
-              Role-Protected In-House Employee Dispatch Portal
-            </p>
-            <div className="mt-3 inline-flex items-center space-x-1.5 px-3 py-1 rounded-full bg-white/10 text-[#b6efd1] text-[11px] font-semibold border border-white/20">
-              <ShieldCheck className="w-3.5 h-3.5" />
-              <span>Company Technicians & Leads Only</span>
-            </div>
-          </div>
-
-          <form onSubmit={handleEmployeeLogin} className="p-6 sm:p-8 space-y-5">
-            {dataLoadError && (
-              <div className="p-3 rounded-xl bg-red-50 border border-red-200 text-red-700 text-xs flex items-center space-x-2">
-                <AlertCircle className="w-4 h-4 shrink-0 text-red-600" />
-                <span>{dataLoadError}</span>
-              </div>
-            )}
-
-            <div>
-              <label className="block text-xs font-bold text-gray-700 uppercase tracking-wider mb-2">
-                Select Technician Profile
-              </label>
-              <div className="space-y-2">
-                {isLoadingData && employees.length === 0 ? (
-                  <div className="space-y-2">
-                    {[1, 2].map((i) => (
-                      <div key={i} className="p-4 rounded-xl border border-gray-200 animate-pulse space-y-2">
-                        <div className="h-4 bg-gray-200 rounded w-1/3"></div>
-                        <div className="h-3 bg-gray-200 rounded w-1/2"></div>
-                      </div>
-                    ))}
-                  </div>
-                ) : employees.length === 0 ? (
-                  <div className="p-4 rounded-xl border border-dashed border-gray-200 text-center text-xs text-gray-500">
-                    No technician profiles available.
-                  </div>
-                ) : (
-                  employees.map((emp) => (
-                  <label
-                    key={emp.id}
-                    className={`flex items-center justify-between p-3 rounded-xl border text-xs cursor-pointer transition-all ${
-                      selectedEmployeeForLogin === emp.id
-                        ? 'border-[#003523] bg-[#003523]/5 ring-2 ring-[#003523]/20 font-bold text-[#003523]'
-                        : 'border-gray-200 hover:border-gray-300 text-gray-700'
-                    }`}
-                  >
-                    <div className="flex items-center space-x-2.5">
-                      <input
-                        type="radio"
-                        name="employeeAccount"
-                        checked={selectedEmployeeForLogin === emp.id}
-                        onChange={() => {
-                          setSelectedEmployeeForLogin(emp.id);
-                        }}
-                        className="text-[#003523] focus:ring-[#003523]"
-                      />
-                      <div>
-                        <div className="flex items-center space-x-1.5 flex-wrap">
-                          <span className="font-bold text-gray-900">{emp.name}</span>
-                          <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-emerald-100 text-emerald-800">
-                            {emp.role || 'Field Specialist'}
-                          </span>
-                        </div>
-                        <div className="text-[11px] text-gray-500 font-normal">
-                          {emp.skills.join(', ')} · {emp.employeeCode || emp.id}
-                        </div>
-                      </div>
-                    </div>
-                    <span className="text-[11px] px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800 font-bold">
-                      {emp.rating} ★
-                    </span>
-                  </label>
-                )))}
-              </div>
-            </div>
-
-            <div>
-              <div className="flex items-center justify-between mb-1">
-                <label className="block text-xs font-bold text-gray-700 uppercase tracking-wider">
-                  Technician Account Password *
-                </label>
-              </div>
-              <div className="relative">
-                <Lock className="w-4 h-4 text-gray-400 absolute left-3 top-3.5" />
-                <input
-                  type={showLoginPassword ? 'text' : 'password'}
-                  required
-                  value={loginPassword}
-                  onChange={(e) => setLoginPassword(e.target.value)}
-                  className="w-full text-xs p-3 pl-9 pr-9 rounded-xl border border-gray-200 focus:outline-none focus:ring-2 focus:ring-[#003523] font-semibold"
-                  placeholder="Enter technician password"
-                />
-                <button
-                  type="button"
-                  onClick={() => setShowLoginPassword(!showLoginPassword)}
-                  className="absolute right-3 top-3 text-gray-400 hover:text-gray-600 cursor-pointer"
-                  title={showLoginPassword ? 'Hide password' : 'Show password'}
-                >
-                  {showLoginPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
-                </button>
-              </div>
-              <span className="text-[11px] text-gray-500 mt-1 block">
-                Strict Work Isolation: Every technician must authenticate with password to view only their assigned jobs.
-              </span>
-            </div>
-
-            <button
-              type="submit"
-              className="w-full py-3 rounded-xl bg-[#003523] text-white text-xs font-bold hover:bg-[#144d37] transition-all shadow-md flex items-center justify-center space-x-2 cursor-pointer"
-            >
-              <ShieldCheck className="w-4 h-4 text-[#fe932c]" />
-              <span>Sign In with Password</span>
-            </button>
-
-            <div className="text-center pt-2">
-              <button
-                type="button"
-                onClick={() => setCurrentPage('home')}
-                className="text-xs text-gray-500 hover:text-gray-800 underline"
-              >
-                ← Return to Public Website
-              </button>
-            </div>
-          </form>
-        </div>
-      </div>
-    );
-  }
 
   if (!currentEmployee) {
     if (isLoadingData) {
@@ -327,7 +165,7 @@ export const EmployeePortal: React.FC = () => {
           </p>
           <button
             onClick={() => {
-              logoutStaff();
+              logout();
               setCurrentPage('home');
             }}
             className="px-4 py-2 bg-[#003523] text-white rounded-xl text-xs font-bold"
@@ -363,7 +201,7 @@ export const EmployeePortal: React.FC = () => {
               <div className="text-xs text-gray-300 mt-1 flex items-center space-x-3">
                 <span>Rating: {currentEmployee.rating} ★</span>
                 <span>•</span>
-                <span>Completed: {currentEmployee.completedJobs} Jobs</span>
+                <span>Completed: {Math.max(currentEmployee.completedJobs || 0, completedJobs.length)} Jobs</span>
                 <span>•</span>
                 <span className="text-emerald-300 font-semibold">
                   Hub: {currentEmployee.serviceAreas[0]}
@@ -404,13 +242,13 @@ export const EmployeePortal: React.FC = () => {
 
             <button
               onClick={() => {
-                logoutStaff();
+                logout();
               }}
               className="flex items-center space-x-1.5 px-3 py-1.5 rounded-xl bg-red-500/20 hover:bg-red-500/30 text-red-200 hover:text-white border border-red-400/30 text-xs font-bold transition-all cursor-pointer"
-              title="Sign Out of Technician Hub"
+              title="Logout"
             >
               <LogOut className="w-3.5 h-3.5 text-rose-300" />
-              <span>Sign Out</span>
+              <span>Logout</span>
             </button>
           </div>
         </div>

@@ -57,12 +57,45 @@ export const Navbar: React.FC = () => {
     currentVendorId,
     currentEmployeeId,
     currentUser,
-    setIsAuthModalOpen,
+    authProfile,
+    openAuthModal,
+    logout,
     employees,
-    vendors,
-    logoutStaff,
-    logoutCustomer
+    vendors
   } = useApp();
+
+  const isLoggedIn = !!authProfile || !!currentUser || currentRole !== 'customer';
+
+  const userRole = authProfile?.role || (
+    currentRole === 'employee' ? 'technician' :
+    currentRole === 'vendor' ? 'vendor' :
+    currentRole === 'operations' || currentRole === 'admin' ? 'ops_manager' :
+    'customer'
+  );
+
+  const roleLabel =
+    userRole === 'technician' ? 'Technician' :
+    userRole === 'vendor' ? 'Vendor Partner' :
+    userRole === 'ops_manager' || userRole === 'admin' ? 'Operations' :
+    'Resident';
+
+  const currentEmployee = employees.find((e) => e.id === currentEmployeeId);
+  const currentVendor = vendors.find((v) => v.id === currentVendorId);
+
+  const displayName =
+    authProfile?.full_name ||
+    currentUser?.name ||
+    (currentRole === 'employee' ? currentEmployee?.name : currentRole === 'vendor' ? currentVendor?.businessName : currentRole === 'operations' ? 'Operations Lead' : '') ||
+    'Account';
+
+  const displaySubtitle = currentUser?.email || authProfile?.phone || currentUser?.phone || '';
+
+  const isStaff = userRole !== 'customer';
+
+  const staffPortalTarget =
+    userRole === 'technician' ? 'employee' :
+    userRole === 'vendor' ? 'vendor' :
+    'admin';
 
   // Scroll shrink state
   const [isScrolled, setIsScrolled] = useState(false);
@@ -78,8 +111,6 @@ export const Navbar: React.FC = () => {
   const megaMenuRef = useRef<HTMLDivElement>(null);
   const signInRef = useRef<HTMLDivElement>(null);
 
-  const currentEmployee = employees.find((e) => e.id === currentEmployeeId);
-  const currentVendor = vendors.find((v) => v.id === currentVendorId);
 
   // Active customer order for logged-in tracker link
   const activeCustomerOrder = requests.find(
@@ -553,236 +584,162 @@ export const Navbar: React.FC = () => {
               </button>
             )}
 
-            {/* Sign In Dropdown (Resident / Staff & Partner) */}
-            <div className="relative" ref={signInRef}>
-              <button
-                type="button"
-                onClick={() => setIsSignInDropdownOpen(!isSignInDropdownOpen)}
-                aria-expanded={isSignInDropdownOpen}
-                aria-haspopup="menu"
-                aria-label="User sign in and account menu"
-                className="flex items-center space-x-1.5 px-2.5 sm:px-3 py-2 rounded-xl border border-gray-200 hover:border-[#0F3D2E] text-[#0F3D2E] text-xs font-semibold transition-colors focus-visible:ring-2 focus-visible:ring-[#0F3D2E] focus-visible:outline-none cursor-pointer"
-              >
-                {/* User avatar or role glyph */}
-                <div className="w-5 h-5 rounded-md bg-[#0F3D2E] text-white flex items-center justify-center font-bold text-[10px]">
-                  {currentRole === 'employee' ? (
-                    'T'
-                  ) : currentRole === 'vendor' ? (
-                    'V'
-                  ) : currentRole === 'operations' ? (
-                    'O'
-                  ) : currentUser ? (
-                    currentUser.name.charAt(0)
-                  ) : (
-                    <User className="w-3 h-3 text-white" />
-                  )}
-                </div>
-                <span className="hidden sm:inline">
-                  {currentRole === 'employee'
-                    ? currentEmployee?.name.split(' ')[0] || 'Tech Hub'
-                    : currentRole === 'vendor'
-                    ? currentVendor?.businessName.split(' ')[0] || 'Vendor Hub'
-                    : currentRole === 'operations'
-                    ? 'Ops Desk'
-                    : currentUser
-                    ? currentUser.name.split(' ')[0]
-                    : 'Sign In'}
-                </span>
-                <ChevronDown
-                  className={`w-3.5 h-3.5 text-gray-500 transition-transform duration-150 ${
-                    isSignInDropdownOpen ? 'rotate-180' : ''
-                  }`}
-                />
-              </button>
-
-              {/* Sign In / Account Dropdown Menu */}
-              {isSignInDropdownOpen && (
-                <div
-                  role="menu"
-                  className="absolute right-0 top-full mt-2 w-64 bg-white rounded-2xl shadow-xl border border-gray-100 p-2 z-50 animate-in fade-in slide-in-from-top-1 duration-150"
+            {/* Public Auth Buttons (Logged Out) or User Account Menu (Logged In) */}
+            {!isLoggedIn ? (
+              <div className="flex items-center space-x-2">
+                <button
+                  type="button"
+                  onClick={() => openAuthModal('login')}
+                  className="px-3 py-2 rounded-xl border border-gray-300 hover:border-[#0F3D2E] text-[#0F3D2E] text-xs font-bold transition-colors focus-visible:ring-2 focus-visible:ring-[#0F3D2E] cursor-pointer"
                 >
-                  {/* Logged in Resident state */}
-                  {currentUser && currentRole === 'customer' && (
-                    <div className="p-2 border-b border-gray-100 mb-1">
-                      <div className="text-xs font-bold text-gray-900">{currentUser.name}</div>
-                      <div className="text-[11px] text-gray-500">{currentUser.phone}</div>
-                      <div className="text-[11px] text-[#0F3D2E] font-medium mt-0.5 truncate">
-                        {currentUser.locality}
+                  Sign in
+                </button>
+                <button
+                  type="button"
+                  onClick={() => openAuthModal('register')}
+                  className="px-3.5 py-2 rounded-xl bg-[#0F3D2E] hover:bg-[#144d37] text-white text-xs font-bold transition-all shadow-xs focus-visible:ring-2 focus-visible:ring-[#0F3D2E] cursor-pointer"
+                >
+                  Sign up
+                </button>
+              </div>
+            ) : (
+              <div className="relative" ref={signInRef}>
+                <button
+                  type="button"
+                  onClick={() => setIsSignInDropdownOpen(!isSignInDropdownOpen)}
+                  aria-expanded={isSignInDropdownOpen}
+                  aria-haspopup="menu"
+                  aria-label="User account menu"
+                  className="flex items-center space-x-2 px-2.5 sm:px-3 py-1.5 rounded-xl border border-gray-200 hover:border-[#0F3D2E] text-[#0F3D2E] text-xs font-semibold transition-colors focus-visible:ring-2 focus-visible:ring-[#0F3D2E] cursor-pointer"
+                >
+                  <div className="w-6 h-6 rounded-md bg-[#0F3D2E] text-white flex items-center justify-center font-bold text-xs">
+                    {displayName.charAt(0).toUpperCase()}
+                  </div>
+                  <div className="hidden sm:flex flex-col text-left leading-tight">
+                    <span className="text-xs font-bold text-gray-900 truncate max-w-[110px]">
+                      {displayName.split(' ')[0]}
+                    </span>
+                    <span className="text-[10px] font-semibold text-[#0F3D2E]">
+                      {roleLabel}
+                    </span>
+                  </div>
+                  <ChevronDown
+                    className={`w-3.5 h-3.5 text-gray-500 transition-transform duration-150 ${
+                      isSignInDropdownOpen ? 'rotate-180' : ''
+                    }`}
+                  />
+                </button>
+
+                {isSignInDropdownOpen && (
+                  <div
+                    role="menu"
+                    className="absolute right-0 top-full mt-2 w-64 bg-white rounded-2xl shadow-xl border border-gray-100 p-2 z-50 animate-in fade-in slide-in-from-top-1 duration-150"
+                  >
+                    {/* User profile card */}
+                    <div className="p-2.5 border-b border-gray-100 mb-1">
+                      <div className="flex items-center justify-between gap-1">
+                        <span className="text-xs font-bold text-gray-900 truncate">{displayName}</span>
+                        <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-50 text-[#0F3D2E] border border-emerald-200 shrink-0">
+                          {roleLabel}
+                        </span>
                       </div>
+                      {displaySubtitle && (
+                        <div className="text-[11px] text-gray-500 truncate mt-0.5">
+                          {displaySubtitle}
+                        </div>
+                      )}
                     </div>
-                  )}
 
-                  {/* If user is logged in as Resident */}
-                  {currentUser && currentRole === 'customer' && (
-                    <>
-                      <button
-                        role="menuitem"
-                        onClick={() => {
-                          setCurrentPage('account');
-                          setIsSignInDropdownOpen(false);
-                        }}
-                        className="w-full text-left px-3 py-2 rounded-xl text-xs font-semibold text-gray-700 hover:bg-gray-50 flex items-center justify-between transition-colors"
-                      >
-                        <div className="flex items-center space-x-2">
-                          <User className="w-3.5 h-3.5 text-gray-500" />
-                          <span>My Account</span>
-                        </div>
-                        <ChevronRight className="w-3.5 h-3.5 text-gray-400" />
-                      </button>
-
-                      <button
-                        role="menuitem"
-                        onClick={() => {
-                          setCurrentPage('account');
-                          setIsSignInDropdownOpen(false);
-                        }}
-                        className="w-full text-left px-3 py-2 rounded-xl text-xs font-semibold text-gray-700 hover:bg-gray-50 flex items-center justify-between transition-colors"
-                      >
-                        <div className="flex items-center space-x-2">
-                          <PackageCheck className="w-3.5 h-3.5 text-gray-500" />
-                          <span>My Bookings ({requests.length})</span>
-                        </div>
-                        <ChevronRight className="w-3.5 h-3.5 text-gray-400" />
-                      </button>
-
-                      {activeCustomerOrder && (
+                    {!isStaff ? (
+                      /* Resident Customer Menu */
+                      <>
                         <button
                           role="menuitem"
                           onClick={() => {
-                            setActiveTrackingRequestId(activeCustomerOrder.id);
+                            setCurrentPage('account');
                             setIsSignInDropdownOpen(false);
                           }}
-                          className="w-full text-left px-3 py-2 rounded-xl text-xs font-semibold text-[#0F3D2E] hover:bg-emerald-50 flex items-center justify-between transition-colors"
+                          className="w-full text-left px-3 py-2 rounded-xl text-xs font-semibold text-gray-700 hover:bg-gray-50 flex items-center justify-between transition-colors cursor-pointer"
                         >
-                          <div className="flex items-center space-x-1.5">
-                            <span className="w-1.5 h-1.5 rounded-full bg-[#F28C28] animate-pulse" />
-                            <span>Track #{activeCustomerOrder.id}</span>
+                          <div className="flex items-center space-x-2">
+                            <User className="w-3.5 h-3.5 text-gray-500" />
+                            <span>My Account</span>
                           </div>
                           <ChevronRight className="w-3.5 h-3.5 text-gray-400" />
                         </button>
-                      )}
 
-                      <div className="my-1 border-t border-gray-100" />
+                        <button
+                          role="menuitem"
+                          onClick={() => {
+                            setCurrentPage('account');
+                            setIsSignInDropdownOpen(false);
+                          }}
+                          className="w-full text-left px-3 py-2 rounded-xl text-xs font-semibold text-gray-700 hover:bg-gray-50 flex items-center justify-between transition-colors cursor-pointer"
+                        >
+                          <div className="flex items-center space-x-2">
+                            <PackageCheck className="w-3.5 h-3.5 text-gray-500" />
+                            <span>My Bookings ({requests.length})</span>
+                          </div>
+                          <ChevronRight className="w-3.5 h-3.5 text-gray-400" />
+                        </button>
 
-                      <button
-                        role="menuitem"
-                        onClick={() => {
-                          logoutCustomer();
-                          setIsSignInDropdownOpen(false);
-                        }}
-                        className="w-full text-left px-3 py-2 rounded-xl text-xs font-semibold text-red-600 hover:bg-red-50 flex items-center justify-between transition-colors cursor-pointer"
-                      >
-                        <div className="flex items-center space-x-2">
-                          <LogOut className="w-3.5 h-3.5 text-red-500" />
-                          <span>Logout</span>
-                        </div>
-                      </button>
-                    </>
-                  )}
+                        {activeCustomerOrder && (
+                          <button
+                            role="menuitem"
+                            onClick={() => {
+                              setActiveTrackingRequestId(activeCustomerOrder.id);
+                              setIsSignInDropdownOpen(false);
+                            }}
+                            className="w-full text-left px-3 py-2 rounded-xl text-xs font-semibold text-[#0F3D2E] hover:bg-emerald-50 flex items-center justify-between transition-colors cursor-pointer"
+                          >
+                            <div className="flex items-center space-x-1.5">
+                              <span className="w-1.5 h-1.5 rounded-full bg-[#F28C28] animate-pulse" />
+                              <span>Track #{activeCustomerOrder.id}</span>
+                            </div>
+                            <ChevronRight className="w-3.5 h-3.5 text-gray-400" />
+                          </button>
+                        )}
+                      </>
+                    ) : (
+                      /* Staff Member Menu */
+                      <>
+                        <button
+                          role="menuitem"
+                          onClick={() => {
+                            setCurrentPage(staffPortalTarget);
+                            setIsSignInDropdownOpen(false);
+                          }}
+                          className="w-full text-left px-3 py-2.5 rounded-xl text-xs font-bold text-[#0F3D2E] bg-emerald-50 hover:bg-emerald-100/70 flex items-center justify-between transition-colors cursor-pointer"
+                        >
+                          <div className="flex items-center space-x-2">
+                            <Briefcase className="w-3.5 h-3.5 text-[#0F3D2E]" />
+                            <span>Go to my portal</span>
+                          </div>
+                          <ChevronRight className="w-3.5 h-3.5 text-[#0F3D2E]" />
+                        </button>
+                      </>
+                    )}
 
-                  {/* Staff Portals when a role is currently active */}
-                  {currentRole !== 'customer' && (
-                    <div className="p-2 border-b border-gray-100 mb-1">
-                      <div className="text-[11px] font-bold text-gray-400 uppercase tracking-wider">
-                        Active Workspace
-                      </div>
-                      <div className="text-xs font-bold text-[#0F3D2E] mt-0.5">
-                        {currentRole === 'employee'
-                          ? `Technician: ${currentEmployee?.name}`
-                          : currentRole === 'vendor'
-                          ? `Vendor: ${currentVendor?.businessName}`
-                          : 'Operations Lead: Harman'}
-                      </div>
-                      <button
-                        onClick={() => {
-                          logoutStaff();
-                          setIsSignInDropdownOpen(false);
-                        }}
-                        className="mt-2 text-xs text-red-600 hover:underline flex items-center space-x-1 font-semibold"
-                      >
-                        <LogOut className="w-3.5 h-3.5" />
-                        <span>Exit Staff Portal</span>
-                      </button>
-                    </div>
-                  )}
+                    <div className="my-1.5 border-t border-gray-100" />
 
-                  {/* Resident Sign In Button (when not logged in) */}
-                  {!currentUser && currentRole === 'customer' && (
+                    {/* Logout Option */}
                     <button
                       role="menuitem"
-                      onClick={() => {
-                        setIsAuthModalOpen(true);
+                      onClick={async () => {
                         setIsSignInDropdownOpen(false);
+                        await logout();
                       }}
-                      className="w-full text-left px-3 py-2.5 rounded-xl text-xs font-bold bg-[#0F3D2E] text-white hover:bg-[#144d37] flex items-center justify-between transition-all"
+                      className="w-full text-left px-3 py-2 rounded-xl text-xs font-semibold text-red-600 hover:bg-red-50 flex items-center justify-between transition-colors cursor-pointer"
                     >
                       <div className="flex items-center space-x-2">
-                        <User className="w-3.5 h-3.5" />
-                        <span>Resident Sign In</span>
+                        <LogOut className="w-3.5 h-3.5 text-red-500" />
+                        <span>Logout</span>
                       </div>
-                      <ArrowRight className="w-3.5 h-3.5" />
                     </button>
-                  )}
-
-                  <div className="my-1.5 border-t border-gray-100" />
-
-                  {/* Staff & Partner Portal Links */}
-                  <div className="px-3 py-1">
-                    <div className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">
-                      Staff & Partner Portals
-                    </div>
                   </div>
-
-                  <button
-                    role="menuitem"
-                    onClick={() => {
-                      if (currentRole === 'employee') {
-                        setCurrentPage('employee');
-                      } else {
-                        setIsAuthModalOpen(true);
-                      }
-                      setIsSignInDropdownOpen(false);
-                    }}
-                    className="w-full text-left px-3 py-2 rounded-xl text-xs font-medium text-gray-700 hover:bg-gray-50 flex items-center justify-between transition-colors"
-                  >
-                    <span>Technician Portal</span>
-                    <Wrench className="w-3.5 h-3.5 text-gray-400" />
-                  </button>
-
-                  <button
-                    role="menuitem"
-                    onClick={() => {
-                      if (currentRole === 'vendor') {
-                        setCurrentPage('vendor');
-                      } else {
-                        setIsAuthModalOpen(true);
-                      }
-                      setIsSignInDropdownOpen(false);
-                    }}
-                    className="w-full text-left px-3 py-2 rounded-xl text-xs font-medium text-gray-700 hover:bg-gray-50 flex items-center justify-between transition-colors"
-                  >
-                    <span>Vendor Partner Hub</span>
-                    <HardHat className="w-3.5 h-3.5 text-gray-400" />
-                  </button>
-
-                  <button
-                    role="menuitem"
-                    onClick={() => {
-                      if (currentRole === 'operations') {
-                        setCurrentPage('admin');
-                      } else {
-                        setIsAuthModalOpen(true);
-                      }
-                      setIsSignInDropdownOpen(false);
-                    }}
-                    className="w-full text-left px-3 py-2 rounded-xl text-xs font-medium text-gray-700 hover:bg-gray-50 flex items-center justify-between transition-colors"
-                  >
-                    <span>Operations Command Desk</span>
-                    <ShieldCheck className="w-3.5 h-3.5 text-gray-400" />
-                  </button>
-                </div>
-              )}
-            </div>
+                )}
+              </div>
+            )}
 
             {/* Filled Primary CTA: "Book a Service" (Desktop) */}
             <button
@@ -957,103 +914,100 @@ export const Navbar: React.FC = () => {
                   Account Access
                 </div>
 
-                {currentUser ? (
-                  <div className="p-3 rounded-xl bg-emerald-50/70 border border-emerald-100 space-y-3">
-                    <div className="flex items-center justify-between">
+                {!isLoggedIn ? (
+                  <div className="flex items-center space-x-2 pt-1">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        openAuthModal('login');
+                        setMobileMenuOpen(false);
+                      }}
+                      className="flex-1 py-2.5 px-3 rounded-xl border border-gray-300 text-[#0F3D2E] text-xs font-bold hover:bg-gray-50 transition-colors text-center cursor-pointer"
+                    >
+                      Sign in
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        openAuthModal('register');
+                        setMobileMenuOpen(false);
+                      }}
+                      className="flex-1 py-2.5 px-3 rounded-xl bg-[#0F3D2E] text-white text-xs font-bold hover:bg-[#144d37] transition-all text-center shadow-xs cursor-pointer"
+                    >
+                      Sign up
+                    </button>
+                  </div>
+                ) : (
+                  <div className="p-3 rounded-xl bg-emerald-50/70 border border-emerald-100 space-y-2.5">
+                    <div className="flex items-center justify-between gap-1">
                       <div>
-                        <div className="text-xs font-bold text-gray-900">
-                          Resident: {currentUser.name}
+                        <div className="text-xs font-bold text-gray-900 truncate">
+                          {displayName}
                         </div>
-                        <div className="text-[11px] text-gray-500">{currentUser.phone}</div>
-                        <div className="text-[11px] text-[#0F3D2E] font-medium">{currentUser.locality}</div>
+                        {displaySubtitle && (
+                          <div className="text-[11px] text-gray-500 truncate">
+                            {displaySubtitle}
+                          </div>
+                        )}
                       </div>
-                      <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-[#c0edd3] text-[#003523]">
-                        {currentUser.status || 'ACTIVE'}
+                      <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-white text-[#0F3D2E] border border-emerald-200 shrink-0">
+                        {roleLabel}
                       </span>
                     </div>
 
-                    <div className="grid grid-cols-2 gap-2 pt-1 border-t border-emerald-100/60">
-                      <button
-                        onClick={() => {
-                          setCurrentPage('account');
-                          setMobileMenuOpen(false);
-                        }}
-                        className="py-1.5 px-2.5 rounded-lg bg-white border border-emerald-200 text-xs font-bold text-[#0F3D2E] flex items-center justify-center space-x-1 hover:bg-emerald-50 transition-colors cursor-pointer"
-                      >
-                        <User className="w-3.5 h-3.5 text-[#0F3D2E]" />
-                        <span>My Account</span>
-                      </button>
+                    {!isStaff ? (
+                      <div className="grid grid-cols-2 gap-2 pt-1 border-t border-emerald-100/60">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setCurrentPage('account');
+                            setMobileMenuOpen(false);
+                          }}
+                          className="py-1.5 px-2.5 rounded-lg bg-white border border-emerald-200 text-xs font-bold text-[#0F3D2E] flex items-center justify-center space-x-1 hover:bg-emerald-50 transition-colors cursor-pointer"
+                        >
+                          <User className="w-3.5 h-3.5 text-[#0F3D2E]" />
+                          <span>My Account</span>
+                        </button>
 
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setCurrentPage('account');
+                            setMobileMenuOpen(false);
+                          }}
+                          className="py-1.5 px-2.5 rounded-lg bg-white border border-emerald-200 text-xs font-bold text-[#0F3D2E] flex items-center justify-center space-x-1 hover:bg-emerald-50 transition-colors cursor-pointer"
+                        >
+                          <PackageCheck className="w-3.5 h-3.5 text-[#0F3D2E]" />
+                          <span>My Bookings ({requests.length})</span>
+                        </button>
+                      </div>
+                    ) : (
                       <button
+                        type="button"
                         onClick={() => {
-                          setCurrentPage('account');
+                          setCurrentPage(staffPortalTarget);
                           setMobileMenuOpen(false);
                         }}
-                        className="py-1.5 px-2.5 rounded-lg bg-white border border-emerald-200 text-xs font-bold text-[#0F3D2E] flex items-center justify-center space-x-1 hover:bg-emerald-50 transition-colors cursor-pointer"
+                        className="w-full py-2 px-3 rounded-lg bg-[#0F3D2E] text-white text-xs font-bold flex items-center justify-center space-x-1.5 transition-colors cursor-pointer"
                       >
-                        <PackageCheck className="w-3.5 h-3.5 text-[#0F3D2E]" />
-                        <span>My Bookings ({requests.length})</span>
+                        <Briefcase className="w-3.5 h-3.5" />
+                        <span>Go to my portal</span>
                       </button>
-                    </div>
+                    )}
 
                     <button
-                      onClick={() => {
-                        logoutCustomer();
+                      type="button"
+                      onClick={async () => {
                         setMobileMenuOpen(false);
+                        await logout();
                       }}
                       className="w-full py-2 px-3 rounded-lg bg-red-50 hover:bg-red-100 text-red-700 border border-red-200 text-xs font-bold flex items-center justify-center space-x-1.5 transition-colors cursor-pointer"
                     >
                       <LogOut className="w-3.5 h-3.5 text-red-600" />
-                      <span>Logout of Account</span>
-                    </button>
-                  </div>
-                ) : (
-                  <button
-                    onClick={() => {
-                      setIsAuthModalOpen(true);
-                      setMobileMenuOpen(false);
-                    }}
-                    className="w-full py-2.5 px-3 rounded-xl bg-[#0F3D2E] text-white text-xs font-bold flex items-center justify-center space-x-2"
-                  >
-                    <User className="w-4 h-4" />
-                    <span>Resident Sign In / Register</span>
-                  </button>
-                )}
-
-                {currentRole !== 'customer' && (
-                  <div className="p-3 rounded-xl bg-gray-50 border border-gray-200 space-y-2">
-                    <div className="text-[11px] font-bold text-gray-500 uppercase tracking-wider">
-                      Active Staff Session
-                    </div>
-                    <div className="text-xs font-bold text-[#0F3D2E]">
-                      {currentRole === 'employee'
-                        ? `Technician: ${currentEmployee?.name}`
-                        : currentRole === 'vendor'
-                        ? `Vendor: ${currentVendor?.businessName}`
-                        : 'Operations Lead: Harman'}
-                    </div>
-                    <button
-                      onClick={() => {
-                        logoutStaff();
-                        setMobileMenuOpen(false);
-                      }}
-                      className="w-full py-1.5 px-3 rounded-lg bg-red-50 hover:bg-red-100 text-red-700 border border-red-200 text-xs font-bold flex items-center justify-center space-x-1.5 transition-colors cursor-pointer"
-                    >
-                      <LogOut className="w-3.5 h-3.5 text-red-600" />
-                      <span>Exit Staff Workspace</span>
+                      <span>Logout</span>
                     </button>
                   </div>
                 )}
-
-                <button
-                  onClick={() => {
-                    setIsAuthModalOpen(true);
-                    setMobileMenuOpen(false);
-                  }}
-                  className="w-full py-2 px-3 rounded-xl border border-gray-200 text-gray-700 text-xs font-semibold hover:bg-gray-50"
-                >
-                  Staff & Partner Portals (Technician, Vendor, Ops)
-                </button>
               </div>
 
               {/* Direct Support Contact Strip */}

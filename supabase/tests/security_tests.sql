@@ -57,6 +57,22 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
+-- Helper to switch session identity to an unauthenticated visitor (anon)
+CREATE OR REPLACE FUNCTION public.sec_test_become_anon()
+RETURNS VOID AS $$
+BEGIN
+    SET LOCAL ROLE anon;
+    PERFORM set_config('request.jwt.claims', '{"role":"anon"}', true);
+    PERFORM set_config('request.jwt.claim.sub', '', true);
+    PERFORM set_config('request.jwt.claim.role', 'anon', true);
+END;
+$$ LANGUAGE plpgsql;
+
+GRANT EXECUTE ON FUNCTION public.sec_test_become_anon() TO PUBLIC;
+GRANT EXECUTE ON FUNCTION public.sec_test_become_postgres() TO PUBLIC;
+GRANT EXECUTE ON FUNCTION public.sec_test_become_user(UUID) TO PUBLIC;
+GRANT EXECUTE ON FUNCTION public.sec_test_record_pass(TEXT, TEXT) TO PUBLIC;
+
 -- Helper function to provision a real test user into auth.users and public.profiles
 CREATE OR REPLACE FUNCTION public.sec_test_setup_user(
     p_id UUID,
@@ -1588,6 +1604,868 @@ BEGIN
 END $$;
 
 -- ------------------------------------------------------------------------------
+-- TEST 12: EXPLICIT GRANTS & PRIVILEGE BOUNDARY VERIFICATION (SEC-12)
+-- Verifies:
+--   12.1: anon can SELECT from services, but receives permission denied (42501)
+--         on customers, service_requests, payments, service_request_secrets, and profiles.
+--   12.2: authenticated role is blocked from executing TRUNCATE on tables.
+--   12.3: anon cannot execute verify_job_otp or record_payment.
+--   12.4: anon CAN execute check_phone_available.
+--   12.5: authenticated customer can still perform standard app actions:
+--         insert a new service request booking and select their own booking.
+-- ------------------------------------------------------------------------------
+DO $$
+DECLARE
+    v_cust_12_uid UUID := '12000000-0000-0000-0000-000000000001'::UUID;
+    v_req_12_id TEXT := 'req-sec-test-12-cust';
+    v_t1_passed BOOLEAN := FALSE;
+    v_t2_passed BOOLEAN := FALSE;
+    v_t3_passed BOOLEAN := FALSE;
+    v_t4_passed BOOLEAN := FALSE;
+    v_t5_passed BOOLEAN := FALSE;
+    v_count INT;
+    v_phone_avail BOOLEAN;
+    v_fetched_id TEXT;
+    v_denied_count INT := 0;
+BEGIN
+    -- (a) As postgres: setup test user
+    PERFORM public.sec_test_become_postgres();
+    PERFORM public.sec_test_setup_user(v_cust_12_uid, 'customer', 'Test Customer Twelve', '+919888912001', FALSE);
+
+    -- Ensure at least one service category and service exists for reading
+    INSERT INTO public.service_categories (id, name, icon)
+    VALUES ('cat-sec-test-12', 'AC & Appliances', 'air-conditioner')
+    ON CONFLICT (id) DO NOTHING;
+
+    INSERT INTO public.services (id, category_id, name, price)
+    VALUES ('srv-sec-test-12', 'cat-sec-test-12', 'Test Service Twelve', 499.00)
+    ON CONFLICT (id) DO NOTHING;
+
+    -- --------------------------------------------------------------------------
+    -- 12.1: anon can read services, but gets permission denied on private tables
+    -- --------------------------------------------------------------------------
+    BEGIN
+        PERFORM public.sec_test_become_anon();
+
+        -- 1. Read services must succeed
+        SELECT COUNT(*) INTO v_count FROM public.services;
+
+        -- 2. Read customers must fail with permission denied (42501)
+        BEGIN
+            EXECUTE 'SELECT id FROM public.customers LIMIT 1';
+            RAISE EXCEPTION 'FAIL: Test 12.1 anon was able to select from customers!';
+        EXCEPTION WHEN OTHERS THEN
+            IF SQLSTATE = '42501' OR SQLERRM ILIKE '%permission denied%' THEN
+                v_denied_count := v_denied_count + 1;
+            ELSE
+                RAISE EXCEPTION 'FAIL: Test 12.1 unexpected error on customers: % (SQLSTATE %)', SQLERRM, SQLSTATE;
+            END IF;
+        END;
+
+        -- 3. Read service_requests must fail with permission denied (42501)
+        BEGIN
+            EXECUTE 'SELECT id FROM public.service_requests LIMIT 1';
+            RAISE EXCEPTION 'FAIL: Test 12.1 anon was able to select from service_requests!';
+        EXCEPTION WHEN OTHERS THEN
+            IF SQLSTATE = '42501' OR SQLERRM ILIKE '%permission denied%' THEN
+                v_denied_count := v_denied_count + 1;
+            ELSE
+                RAISE EXCEPTION 'FAIL: Test 12.1 unexpected error on service_requests: % (SQLSTATE %)', SQLERRM, SQLSTATE;
+            END IF;
+        END;
+
+        -- 4. Read payments must fail with permission denied (42501)
+        BEGIN
+            EXECUTE 'SELECT id FROM public.payments LIMIT 1';
+            RAISE EXCEPTION 'FAIL: Test 12.1 anon was able to select from payments!';
+        EXCEPTION WHEN OTHERS THEN
+            IF SQLSTATE = '42501' OR SQLERRM ILIKE '%permission denied%' THEN
+                v_denied_count := v_denied_count + 1;
+            ELSE
+                RAISE EXCEPTION 'FAIL: Test 12.1 unexpected error on payments: % (SQLSTATE %)', SQLERRM, SQLSTATE;
+            END IF;
+        END;
+
+        -- 5. Read service_request_secrets must fail with permission denied (42501)
+        BEGIN
+            EXECUTE 'SELECT request_id FROM public.service_request_secrets LIMIT 1';
+            RAISE EXCEPTION 'FAIL: Test 12.1 anon was able to select from service_request_secrets!';
+        EXCEPTION WHEN OTHERS THEN
+            IF SQLSTATE = '42501' OR SQLERRM ILIKE '%permission denied%' THEN
+                v_denied_count := v_denied_count + 1;
+            ELSE
+                RAISE EXCEPTION 'FAIL: Test 12.1 unexpected error on service_request_secrets: % (SQLSTATE %)', SQLERRM, SQLSTATE;
+            END IF;
+        END;
+
+        -- 6. Read profiles must fail with permission denied (42501)
+        BEGIN
+            EXECUTE 'SELECT id FROM public.profiles LIMIT 1';
+            RAISE EXCEPTION 'FAIL: Test 12.1 anon was able to select from profiles!';
+        EXCEPTION WHEN OTHERS THEN
+            IF SQLSTATE = '42501' OR SQLERRM ILIKE '%permission denied%' THEN
+                v_denied_count := v_denied_count + 1;
+            ELSE
+                RAISE EXCEPTION 'FAIL: Test 12.1 unexpected error on profiles: % (SQLSTATE %)', SQLERRM, SQLSTATE;
+            END IF;
+        END;
+
+        IF v_denied_count = 5 THEN
+            v_t1_passed := TRUE;
+        END IF;
+
+        PERFORM public.sec_test_become_postgres();
+    EXCEPTION WHEN OTHERS THEN
+        PERFORM public.sec_test_become_postgres();
+        RAISE;
+    END;
+
+    -- --------------------------------------------------------------------------
+    -- 12.2: authenticated has no TRUNCATE privilege on tables
+    -- --------------------------------------------------------------------------
+    BEGIN
+        PERFORM public.sec_test_become_user(v_cust_12_uid);
+
+        BEGIN
+            EXECUTE 'TRUNCATE TABLE public.service_requests';
+            RAISE EXCEPTION 'FAIL: Test 12.2 authenticated was able to TRUNCATE service_requests!';
+        EXCEPTION WHEN OTHERS THEN
+            IF SQLSTATE = '42501' OR SQLERRM ILIKE '%permission denied%' OR SQLERRM ILIKE '%must be owner%' THEN
+                v_t2_passed := TRUE;
+            ELSE
+                RAISE EXCEPTION 'FAIL: Test 12.2 unexpected error on truncate: % (SQLSTATE %)', SQLERRM, SQLSTATE;
+            END IF;
+        END;
+
+        PERFORM public.sec_test_become_postgres();
+    EXCEPTION WHEN OTHERS THEN
+        PERFORM public.sec_test_become_postgres();
+        RAISE;
+    END;
+
+    -- --------------------------------------------------------------------------
+    -- 12.3: anon cannot execute verify_job_otp or record_payment
+    -- --------------------------------------------------------------------------
+    BEGIN
+        PERFORM public.sec_test_become_anon();
+
+        -- verify_job_otp execution attempt by anon
+        BEGIN
+            PERFORM public.verify_job_otp('dummy-id', '1234');
+            RAISE EXCEPTION 'FAIL: Test 12.3 anon was able to execute verify_job_otp!';
+        EXCEPTION WHEN OTHERS THEN
+            IF SQLSTATE = '42501' OR SQLERRM ILIKE '%permission denied%' THEN
+                -- Expected
+                NULL;
+            ELSE
+                RAISE EXCEPTION 'FAIL: Test 12.3 unexpected error on verify_job_otp: % (SQLSTATE %)', SQLERRM, SQLSTATE;
+            END IF;
+        END;
+
+        -- record_payment execution attempt by anon
+        BEGIN
+            PERFORM public.record_payment('dummy-id', 499, 'CASH');
+            RAISE EXCEPTION 'FAIL: Test 12.3 anon was able to execute record_payment!';
+        EXCEPTION WHEN OTHERS THEN
+            IF SQLSTATE = '42501' OR SQLERRM ILIKE '%permission denied%' THEN
+                v_t3_passed := TRUE;
+            ELSE
+                RAISE EXCEPTION 'FAIL: Test 12.3 unexpected error on record_payment: % (SQLSTATE %)', SQLERRM, SQLSTATE;
+            END IF;
+        END;
+
+        PERFORM public.sec_test_become_postgres();
+    EXCEPTION WHEN OTHERS THEN
+        PERFORM public.sec_test_become_postgres();
+        RAISE;
+    END;
+
+    -- --------------------------------------------------------------------------
+    -- 12.4: anon CAN execute check_phone_available
+    -- --------------------------------------------------------------------------
+    BEGIN
+        PERFORM public.sec_test_become_anon();
+
+        v_phone_avail := public.check_phone_available('9888999999');
+        IF v_phone_avail IS NOT NULL THEN
+            v_t4_passed := TRUE;
+        ELSE
+            RAISE EXCEPTION 'FAIL: Test 12.4 check_phone_available returned NULL!';
+        END IF;
+
+        PERFORM public.sec_test_become_postgres();
+    EXCEPTION WHEN OTHERS THEN
+        PERFORM public.sec_test_become_postgres();
+        RAISE;
+    END;
+
+    -- --------------------------------------------------------------------------
+    -- 12.5: authenticated customer can still perform normal app actions
+    --       (create booking via INSERT, read own booking via SELECT)
+    -- --------------------------------------------------------------------------
+    BEGIN
+        PERFORM public.sec_test_become_user(v_cust_12_uid);
+
+        -- 1. Create booking
+        INSERT INTO public.service_requests (
+            id,
+            user_id,
+            customer_name,
+            customer_phone,
+            customer_address,
+            locality,
+            items,
+            total,
+            status,
+            payment_status,
+            created_at
+        ) VALUES (
+            v_req_12_id,
+            v_cust_12_uid,
+            'Test Customer Twelve',
+            '+919888912001',
+            'Flat 12B, Sunny Enclave',
+            'Sunny Enclave, Sector 125, Kharar',
+            jsonb_build_array(jsonb_build_object('serviceId', 'srv-sec-test-12', 'name', 'Test Service Twelve', 'price', 499)),
+            499.00,
+            'NEW',
+            'PENDING',
+            NOW()
+        );
+
+        -- 2. Read own booking
+        SELECT id INTO v_fetched_id
+        FROM public.service_requests
+        WHERE id = v_req_12_id AND user_id = v_cust_12_uid;
+
+        IF v_fetched_id = v_req_12_id THEN
+            v_t5_passed := TRUE;
+        ELSE
+            RAISE EXCEPTION 'FAIL: Test 12.5 customer could not read own newly inserted service request!';
+        END IF;
+
+        PERFORM public.sec_test_become_postgres();
+    EXCEPTION WHEN OTHERS THEN
+        PERFORM public.sec_test_become_postgres();
+        RAISE;
+    END;
+
+    -- (e) As postgres: record passes
+    IF v_t1_passed THEN
+        PERFORM public.sec_test_record_pass('Test 12.1', 'anon can read services but gets permission denied on private tables (SEC-12)');
+    END IF;
+
+    IF v_t2_passed THEN
+        PERFORM public.sec_test_record_pass('Test 12.2', 'authenticated has no TRUNCATE privilege on tables (SEC-12)');
+    END IF;
+
+    IF v_t3_passed THEN
+        PERFORM public.sec_test_record_pass('Test 12.3', 'anon cannot execute verify_job_otp or record_payment (SEC-12)');
+    END IF;
+
+    IF v_t4_passed THEN
+        PERFORM public.sec_test_record_pass('Test 12.4', 'anon CAN execute check_phone_available (SEC-12)');
+    END IF;
+
+    IF v_t5_passed THEN
+        PERFORM public.sec_test_record_pass('Test 12.5', 'authenticated customer can create and read own bookings (SEC-12)');
+    END IF;
+
+    IF NOT (v_t1_passed AND v_t2_passed AND v_t3_passed AND v_t4_passed AND v_t5_passed) THEN
+        RAISE EXCEPTION 'FAIL: Test 12 not all sub-tests passed';
+    END IF;
+END $$;
+
+-- ------------------------------------------------------------------------------
+-- TEST 13: EMPLOYEES & VENDORS TABLE PERMISSIONS & RLS POLICIES
+-- Description:
+--   13.1: Admin can insert into employees and vendors
+--   13.2: Ops_manager can insert into employees and vendors
+--   13.3: Customer CANNOT insert into employees or vendors (blocked by RLS)
+--   13.4: Technician CANNOT insert into employees or vendors (blocked by RLS)
+--   13.5: Vendor CANNOT insert into employees or vendors (blocked by RLS)
+--   13.6: Authenticated role has no DELETE privilege on employees and vendors (REVOKE DELETE enforced)
+-- ------------------------------------------------------------------------------
+DO $$
+DECLARE
+    v_admin_uid CONSTANT UUID := '13000000-0000-0000-0000-000000000001'::UUID;
+    v_ops_uid   CONSTANT UUID := '13000000-0000-0000-0000-000000000002'::UUID;
+    v_cust_uid  CONSTANT UUID := '13000000-0000-0000-0000-000000000003'::UUID;
+    v_tech_uid  CONSTANT UUID := '13000000-0000-0000-0000-000000000004'::UUID;
+    v_vnd_uid   CONSTANT UUID := '13000000-0000-0000-0000-000000000005'::UUID;
+
+    v_target_user_1 CONSTANT UUID := '13000000-0000-0000-0000-000000000011'::UUID;
+    v_target_user_2 CONSTANT UUID := '13000000-0000-0000-0000-000000000012'::UUID;
+    v_target_user_3 CONSTANT UUID := '13000000-0000-0000-0000-000000000013'::UUID;
+    v_target_user_4 CONSTANT UUID := '13000000-0000-0000-0000-000000000014'::UUID;
+
+    v_t1_passed BOOLEAN := FALSE;
+    v_t2_passed BOOLEAN := FALSE;
+    v_t3_passed BOOLEAN := FALSE;
+    v_t4_passed BOOLEAN := FALSE;
+    v_t5_passed BOOLEAN := FALSE;
+    v_t6_passed BOOLEAN := FALSE;
+BEGIN
+    -- Setup test users
+    PERFORM public.sec_test_become_postgres();
+    PERFORM public.sec_test_setup_user(v_admin_uid, 'admin', 'Sec Admin 13', '+91 98888 13101');
+    PERFORM public.sec_test_setup_user(v_ops_uid, 'ops_manager', 'Sec Ops 13', '+91 98888 13102');
+    PERFORM public.sec_test_setup_user(v_cust_uid, 'customer', 'Sec Cust 13', '+91 98888 13103');
+    PERFORM public.sec_test_setup_user(v_tech_uid, 'technician', 'Sec Tech 13', '+91 98888 13104');
+    PERFORM public.sec_test_setup_user(v_vnd_uid, 'vendor', 'Sec Vnd 13', '+91 98888 13105');
+
+    PERFORM public.sec_test_setup_user(v_target_user_1, 'technician', 'Target Tech 1', '+91 98888 13111');
+    PERFORM public.sec_test_setup_user(v_target_user_2, 'vendor', 'Target Vnd 2', '+91 98888 13112');
+    PERFORM public.sec_test_setup_user(v_target_user_3, 'technician', 'Target Tech 3', '+91 98888 13113');
+    PERFORM public.sec_test_setup_user(v_target_user_4, 'vendor', 'Target Vnd 4', '+91 98888 13114');
+
+    -- --------------------------------------------------------------------------
+    -- 13.1: Admin can insert into employees and vendors
+    -- --------------------------------------------------------------------------
+    BEGIN
+        PERFORM public.sec_test_become_user(v_admin_uid);
+
+        INSERT INTO public.employees (id, employee_code, name, mobile, role, user_id, email)
+        VALUES ('emp-sec-13-adm', 'EMP-13A', 'Admin Staff', '+91 98888 13111', 'Field Specialist', v_target_user_1, 'adminstaff@test.internal');
+
+        INSERT INTO public.vendors (id, business_name, owner_name, mobile, status, user_id, email)
+        VALUES ('vnd-sec-13-adm', 'Admin Trade Partner', 'Partner Owner', '+91 98888 13112', 'ACTIVE', v_target_user_2, 'adminvnd@test.internal');
+
+        v_t1_passed := TRUE;
+        PERFORM public.sec_test_become_postgres();
+    EXCEPTION WHEN OTHERS THEN
+        PERFORM public.sec_test_become_postgres();
+        RAISE EXCEPTION 'FAIL: Test 13.1 admin failed to insert into employees or vendors: % (SQLSTATE %)', SQLERRM, SQLSTATE;
+    END;
+
+    -- --------------------------------------------------------------------------
+    -- 13.2: Ops_manager can insert into employees and vendors
+    -- --------------------------------------------------------------------------
+    BEGIN
+        PERFORM public.sec_test_become_user(v_ops_uid);
+
+        INSERT INTO public.employees (id, employee_code, name, mobile, role, user_id, email)
+        VALUES ('emp-sec-13-ops', 'EMP-13O', 'Ops Staff', '+91 98888 13113', 'Field Specialist', v_target_user_3, 'opsstaff@test.internal');
+
+        INSERT INTO public.vendors (id, business_name, owner_name, mobile, status, user_id, email)
+        VALUES ('vnd-sec-13-ops', 'Ops Trade Partner', 'Ops Partner Owner', '+91 98888 13114', 'ACTIVE', v_target_user_4, 'opsvnd@test.internal');
+
+        v_t2_passed := TRUE;
+        PERFORM public.sec_test_become_postgres();
+    EXCEPTION WHEN OTHERS THEN
+        PERFORM public.sec_test_become_postgres();
+        RAISE EXCEPTION 'FAIL: Test 13.2 ops_manager failed to insert into employees or vendors: % (SQLSTATE %)', SQLERRM, SQLSTATE;
+    END;
+
+    -- --------------------------------------------------------------------------
+    -- 13.3: Customer CANNOT insert into employees or vendors
+    -- --------------------------------------------------------------------------
+    BEGIN
+        PERFORM public.sec_test_become_user(v_cust_uid);
+
+        BEGIN
+            INSERT INTO public.employees (id, employee_code, name, mobile, role, user_id, email)
+            VALUES ('emp-sec-13-cst', 'EMP-13C', 'Cust Tech', '+91 98888 13199', 'Field Specialist', v_cust_uid, 'custtech@test.internal');
+            RAISE EXCEPTION 'FAIL: Test 13.3 customer was able to insert into employees!';
+        EXCEPTION WHEN OTHERS THEN
+            IF SQLSTATE = '42501' OR SQLERRM ILIKE '%row-level security%' OR SQLERRM ILIKE '%permission denied%' THEN
+                NULL;
+            ELSE
+                RAISE EXCEPTION 'FAIL: Test 13.3 unexpected error inserting employee: % (SQLSTATE %)', SQLERRM, SQLSTATE;
+            END IF;
+        END;
+
+        BEGIN
+            INSERT INTO public.vendors (id, business_name, owner_name, mobile, status, user_id, email)
+            VALUES ('vnd-sec-13-cst', 'Cust Partner', 'Cust Owner', '+91 98888 13198', 'ACTIVE', v_cust_uid, 'custpartner@test.internal');
+            RAISE EXCEPTION 'FAIL: Test 13.3 customer was able to insert into vendors!';
+        EXCEPTION WHEN OTHERS THEN
+            IF SQLSTATE = '42501' OR SQLERRM ILIKE '%row-level security%' OR SQLERRM ILIKE '%permission denied%' THEN
+                v_t3_passed := TRUE;
+            ELSE
+                RAISE EXCEPTION 'FAIL: Test 13.3 unexpected error inserting vendor: % (SQLSTATE %)', SQLERRM, SQLSTATE;
+            END IF;
+        END;
+
+        PERFORM public.sec_test_become_postgres();
+    EXCEPTION WHEN OTHERS THEN
+        PERFORM public.sec_test_become_postgres();
+        RAISE;
+    END;
+
+    -- --------------------------------------------------------------------------
+    -- 13.4: Technician CANNOT insert into employees or vendors
+    -- --------------------------------------------------------------------------
+    BEGIN
+        PERFORM public.sec_test_become_user(v_tech_uid);
+
+        BEGIN
+            INSERT INTO public.employees (id, employee_code, name, mobile, role, user_id, email)
+            VALUES ('emp-sec-13-tch', 'EMP-13T', 'Tech Rogue', '+91 98888 13197', 'Field Specialist', v_tech_uid, 'rogue@test.internal');
+            RAISE EXCEPTION 'FAIL: Test 13.4 technician was able to insert into employees!';
+        EXCEPTION WHEN OTHERS THEN
+            IF SQLSTATE = '42501' OR SQLERRM ILIKE '%row-level security%' OR SQLERRM ILIKE '%permission denied%' THEN
+                NULL;
+            ELSE
+                RAISE EXCEPTION 'FAIL: Test 13.4 unexpected error inserting employee: % (SQLSTATE %)', SQLERRM, SQLSTATE;
+            END IF;
+        END;
+
+        BEGIN
+            INSERT INTO public.vendors (id, business_name, owner_name, mobile, status, user_id, email)
+            VALUES ('vnd-sec-13-tch', 'Tech Rogue Partner', 'Rogue Owner', '+91 98888 13196', 'ACTIVE', v_tech_uid, 'roguetrader@test.internal');
+            RAISE EXCEPTION 'FAIL: Test 13.4 technician was able to insert into vendors!';
+        EXCEPTION WHEN OTHERS THEN
+            IF SQLSTATE = '42501' OR SQLERRM ILIKE '%row-level security%' OR SQLERRM ILIKE '%permission denied%' THEN
+                v_t4_passed := TRUE;
+            ELSE
+                RAISE EXCEPTION 'FAIL: Test 13.4 unexpected error inserting vendor: % (SQLSTATE %)', SQLERRM, SQLSTATE;
+            END IF;
+        END;
+
+        PERFORM public.sec_test_become_postgres();
+    EXCEPTION WHEN OTHERS THEN
+        PERFORM public.sec_test_become_postgres();
+        RAISE;
+    END;
+
+    -- --------------------------------------------------------------------------
+    -- 13.5: Vendor CANNOT insert into employees or vendors
+    -- --------------------------------------------------------------------------
+    BEGIN
+        PERFORM public.sec_test_become_user(v_vnd_uid);
+
+        BEGIN
+            INSERT INTO public.employees (id, employee_code, name, mobile, role, user_id, email)
+            VALUES ('emp-sec-13-vnd', 'EMP-13V', 'Vnd Rogue Tech', '+91 98888 13195', 'Field Specialist', v_vnd_uid, 'vndrogue@test.internal');
+            RAISE EXCEPTION 'FAIL: Test 13.5 vendor was able to insert into employees!';
+        EXCEPTION WHEN OTHERS THEN
+            IF SQLSTATE = '42501' OR SQLERRM ILIKE '%row-level security%' OR SQLERRM ILIKE '%permission denied%' THEN
+                NULL;
+            ELSE
+                RAISE EXCEPTION 'FAIL: Test 13.5 unexpected error inserting employee: % (SQLSTATE %)', SQLERRM, SQLSTATE;
+            END IF;
+        END;
+
+        BEGIN
+            INSERT INTO public.vendors (id, business_name, owner_name, mobile, status, user_id, email)
+            VALUES ('vnd-sec-13-vnd', 'Vnd Rogue Co', 'Vnd Owner', '+91 98888 13194', 'ACTIVE', v_vnd_uid, 'vndco@test.internal');
+            RAISE EXCEPTION 'FAIL: Test 13.5 vendor was able to insert into vendors!';
+        EXCEPTION WHEN OTHERS THEN
+            IF SQLSTATE = '42501' OR SQLERRM ILIKE '%row-level security%' OR SQLERRM ILIKE '%permission denied%' THEN
+                v_t5_passed := TRUE;
+            ELSE
+                RAISE EXCEPTION 'FAIL: Test 13.5 unexpected error inserting vendor: % (SQLSTATE %)', SQLERRM, SQLSTATE;
+            END IF;
+        END;
+
+        PERFORM public.sec_test_become_postgres();
+    EXCEPTION WHEN OTHERS THEN
+        PERFORM public.sec_test_become_postgres();
+        RAISE;
+    END;
+
+    -- --------------------------------------------------------------------------
+    -- 13.6: Authenticated role has no DELETE privilege on employees and vendors
+    -- --------------------------------------------------------------------------
+    BEGIN
+        PERFORM public.sec_test_become_postgres();
+
+        -- 1. Check schema-level table privileges
+        IF has_table_privilege('authenticated', 'public.employees', 'DELETE') THEN
+            RAISE EXCEPTION 'FAIL: Test 13.6 authenticated role has DELETE privilege on public.employees!';
+        END IF;
+
+        IF has_table_privilege('authenticated', 'public.vendors', 'DELETE') THEN
+            RAISE EXCEPTION 'FAIL: Test 13.6 authenticated role has DELETE privilege on public.vendors!';
+        END IF;
+
+        -- 2. Verify runtime statement rejection for authenticated user (permission denied 42501)
+        PERFORM public.sec_test_become_user(v_admin_uid);
+
+        BEGIN
+            EXECUTE 'DELETE FROM public.employees WHERE id = ''emp-sec-13-adm''';
+            RAISE EXCEPTION 'FAIL: Test 13.6 authenticated user was able to execute DELETE on public.employees!';
+        EXCEPTION WHEN OTHERS THEN
+            IF SQLSTATE = '42501' OR SQLERRM ILIKE '%permission denied%' THEN
+                NULL;
+            ELSE
+                RAISE EXCEPTION 'FAIL: Test 13.6 unexpected error deleting from employees: % (SQLSTATE %)', SQLERRM, SQLSTATE;
+            END IF;
+        END;
+
+        BEGIN
+            EXECUTE 'DELETE FROM public.vendors WHERE id = ''vnd-sec-13-adm''';
+            RAISE EXCEPTION 'FAIL: Test 13.6 authenticated user was able to execute DELETE on public.vendors!';
+        EXCEPTION WHEN OTHERS THEN
+            IF SQLSTATE = '42501' OR SQLERRM ILIKE '%permission denied%' THEN
+                v_t6_passed := TRUE;
+            ELSE
+                RAISE EXCEPTION 'FAIL: Test 13.6 unexpected error deleting from vendors: % (SQLSTATE %)', SQLERRM, SQLSTATE;
+            END IF;
+        END;
+
+        PERFORM public.sec_test_become_postgres();
+    EXCEPTION WHEN OTHERS THEN
+        PERFORM public.sec_test_become_postgres();
+        RAISE;
+    END;
+
+    -- Record passes as postgres
+    IF v_t1_passed THEN
+        PERFORM public.sec_test_record_pass('Test 13.1', 'admin can insert into employees and vendors');
+    END IF;
+
+    IF v_t2_passed THEN
+        PERFORM public.sec_test_record_pass('Test 13.2', 'ops_manager can insert into employees and vendors');
+    END IF;
+
+    IF v_t3_passed THEN
+        PERFORM public.sec_test_record_pass('Test 13.3', 'customer CANNOT insert into employees or vendors (blocked by RLS)');
+    END IF;
+
+    IF v_t4_passed THEN
+        PERFORM public.sec_test_record_pass('Test 13.4', 'technician CANNOT insert into employees or vendors (blocked by RLS)');
+    END IF;
+
+    IF v_t5_passed THEN
+        PERFORM public.sec_test_record_pass('Test 13.5', 'vendor CANNOT insert into employees or vendors (blocked by RLS)');
+    END IF;
+
+    IF v_t6_passed THEN
+        PERFORM public.sec_test_record_pass('Test 13.6', 'authenticated role has no DELETE privilege on employees and vendors (SEC-13)');
+    END IF;
+
+    IF NOT (v_t1_passed AND v_t2_passed AND v_t3_passed AND v_t4_passed AND v_t5_passed AND v_t6_passed) THEN
+        RAISE EXCEPTION 'FAIL: Test 13 not all sub-tests passed';
+    END IF;
+END $$;
+
+-- ------------------------------------------------------------------------------
+-- TEST 14: STAFF PROVISIONING PHONE LIFECYCLE & DUPLICATE PROTECTION (SEC-14)
+-- Description:
+--   14.1: Edge function sequence succeeds without self-collision:
+--         Insert auth.users with phone in metadata -> handle_new_user creates profile ->
+--         Follow-up UPDATE on profiles (role, full_name, must_change_password) succeeds without error.
+--   14.2: Second staff creation with the same phone fails with PHONE_ALREADY_REGISTERED.
+--   14.3: Staff creation with a different unused phone succeeds.
+--   14.4: Failed provisioning leaves no orphan: cleaning up auth user & profile frees the phone.
+--   14.5: Customer duplicate protection blocks customer from taking staff phone (and hides email for non-admin).
+-- ------------------------------------------------------------------------------
+DO $$
+DECLARE
+    v_staff_14a_uid UUID := '14000000-0000-0000-0000-000000000001'::UUID;
+    v_staff_14b_uid UUID := '14000000-0000-0000-0000-000000000002'::UUID;
+    v_staff_14c_uid UUID := '14000000-0000-0000-0000-000000000003'::UUID;
+    v_staff_14d_uid UUID := '14000000-0000-0000-0000-000000000004'::UUID;
+    v_cust_14_uid   UUID := '14000000-0000-0000-0000-000000000005'::UUID;
+
+    v_phone_1 TEXT := '+91 97800 30001';
+    v_phone_2 TEXT := '+91 97800 30002';
+    v_phone_temp TEXT := '+91 97800 30003';
+
+    v_t1_passed BOOLEAN := FALSE;
+    v_t2_passed BOOLEAN := FALSE;
+    v_t3_passed BOOLEAN := FALSE;
+    v_t4_passed BOOLEAN := FALSE;
+    v_t5_passed BOOLEAN := FALSE;
+
+    v_profile_role TEXT;
+    v_profile_phone TEXT;
+    v_profile_norm TEXT;
+    v_must_change BOOLEAN;
+    v_err_msg TEXT;
+BEGIN
+    PERFORM public.sec_test_become_postgres();
+
+    -- --------------------------------------------------------------------------
+    -- 14.1: Edge function sequence succeeds without self-collision
+    -- --------------------------------------------------------------------------
+    BEGIN
+        -- Step A: Insert auth user with phone in metadata (simulates auth.admin.createUser)
+        INSERT INTO auth.users (
+            id,
+            instance_id,
+            aud,
+            role,
+            email,
+            encrypted_password,
+            email_confirmed_at,
+            raw_app_meta_data,
+            raw_user_meta_data,
+            created_at,
+            updated_at
+        ) VALUES (
+            v_staff_14a_uid,
+            '00000000-0000-0000-0000-000000000000'::UUID,
+            'authenticated',
+            'authenticated',
+            'staff14a@test.pindcare.internal',
+            crypt('TemporaryPass123!', gen_salt('bf')),
+            NOW(),
+            '{}'::jsonb,
+            jsonb_build_object('full_name', 'Staff Tech 14A', 'phone', v_phone_1, 'role', 'technician'),
+            NOW(),
+            NOW()
+        );
+
+        -- Step B: Function updates role and must_change_password on profiles
+        UPDATE public.profiles
+        SET
+            role = 'technician',
+            full_name = 'Staff Tech 14A',
+            must_change_password = true,
+            updated_at = NOW()
+        WHERE id = v_staff_14a_uid;
+
+        -- Verify state
+        SELECT role, phone, phone_normalized, must_change_password
+        INTO v_profile_role, v_profile_phone, v_profile_norm, v_must_change
+        FROM public.profiles
+        WHERE id = v_staff_14a_uid;
+
+        IF v_profile_role = 'technician' AND v_profile_norm = '9780030001' AND v_must_change = TRUE THEN
+            v_t1_passed := TRUE;
+        ELSE
+            RAISE EXCEPTION 'FAIL: Test 14.1 unexpected profile state (role=%, norm=%, must_change=%)', v_profile_role, v_profile_norm, v_must_change;
+        END IF;
+    EXCEPTION WHEN OTHERS THEN
+        RAISE EXCEPTION 'FAIL: Test 14.1 staff creation sequence failed: % (SQLSTATE %)', SQLERRM, SQLSTATE;
+    END;
+
+    -- --------------------------------------------------------------------------
+    -- 14.2: Second staff with the same phone fails with PHONE_ALREADY_REGISTERED
+    -- --------------------------------------------------------------------------
+    BEGIN
+        INSERT INTO auth.users (
+            id,
+            instance_id,
+            aud,
+            role,
+            email,
+            encrypted_password,
+            email_confirmed_at,
+            raw_app_meta_data,
+            raw_user_meta_data,
+            created_at,
+            updated_at
+        ) VALUES (
+            v_staff_14b_uid,
+            '00000000-0000-0000-0000-000000000000'::UUID,
+            'authenticated',
+            'authenticated',
+            'staff14b@test.pindcare.internal',
+            crypt('TemporaryPass123!', gen_salt('bf')),
+            NOW(),
+            '{}'::jsonb,
+            jsonb_build_object('full_name', 'Staff Tech 14B Dup', 'phone', v_phone_1, 'role', 'technician'),
+            NOW(),
+            NOW()
+        );
+        RAISE EXCEPTION 'FAIL: Test 14.2 second staff with same phone was allowed!';
+    EXCEPTION WHEN OTHERS THEN
+        IF SQLERRM LIKE '%PHONE_ALREADY_REGISTERED%' OR SQLERRM LIKE '%already associated%' OR SQLERRM LIKE '%already registered%' OR SQLERRM LIKE '%idx_profiles_phone_normalized%' THEN
+            v_t2_passed := TRUE;
+        ELSE
+            RAISE EXCEPTION 'FAIL: Test 14.2 unexpected error: % (SQLSTATE %)', SQLERRM, SQLSTATE;
+        END IF;
+    END;
+
+    -- --------------------------------------------------------------------------
+    -- 14.3: Staff with a different unused phone succeeds
+    -- --------------------------------------------------------------------------
+    BEGIN
+        INSERT INTO auth.users (
+            id,
+            instance_id,
+            aud,
+            role,
+            email,
+            encrypted_password,
+            email_confirmed_at,
+            raw_app_meta_data,
+            raw_user_meta_data,
+            created_at,
+            updated_at
+        ) VALUES (
+            v_staff_14c_uid,
+            '00000000-0000-0000-0000-000000000000'::UUID,
+            'authenticated',
+            'authenticated',
+            'staff14c@test.pindcare.internal',
+            crypt('TemporaryPass123!', gen_salt('bf')),
+            NOW(),
+            '{}'::jsonb,
+            jsonb_build_object('full_name', 'Staff Tech 14C Distinct', 'phone', v_phone_2, 'role', 'technician'),
+            NOW(),
+            NOW()
+        );
+
+        UPDATE public.profiles
+        SET
+            role = 'technician',
+            full_name = 'Staff Tech 14C Distinct',
+            must_change_password = true,
+            updated_at = NOW()
+        WHERE id = v_staff_14c_uid;
+
+        SELECT phone_normalized INTO v_profile_norm
+        FROM public.profiles
+        WHERE id = v_staff_14c_uid;
+
+        IF v_profile_norm = '9780030002' THEN
+            v_t3_passed := TRUE;
+        ELSE
+            RAISE EXCEPTION 'FAIL: Test 14.3 unexpected phone_normalized: %', v_profile_norm;
+        END IF;
+    EXCEPTION WHEN OTHERS THEN
+        RAISE EXCEPTION 'FAIL: Test 14.3 distinct phone staff creation failed: % (SQLSTATE %)', SQLERRM, SQLSTATE;
+    END;
+
+    -- --------------------------------------------------------------------------
+    -- 14.4: Failed provisioning rollback leaves no orphan; phone can be reused
+    -- --------------------------------------------------------------------------
+    BEGIN
+        -- 1. Create a user holding v_phone_temp
+        INSERT INTO auth.users (
+            id,
+            instance_id,
+            aud,
+            role,
+            email,
+            encrypted_password,
+            email_confirmed_at,
+            raw_app_meta_data,
+            raw_user_meta_data,
+            created_at,
+            updated_at
+        ) VALUES (
+            v_staff_14d_uid,
+            '00000000-0000-0000-0000-000000000000'::UUID,
+            'authenticated',
+            'authenticated',
+            'staff14d@test.pindcare.internal',
+            crypt('TemporaryPass123!', gen_salt('bf')),
+            NOW(),
+            '{}'::jsonb,
+            jsonb_build_object('full_name', 'Staff Temp Rollback', 'phone', v_phone_temp, 'role', 'technician'),
+            NOW(),
+            NOW()
+        );
+
+        -- Simulate rollback performed by Edge Function (delete profile and auth user)
+        DELETE FROM public.profiles WHERE id = v_staff_14d_uid;
+        DELETE FROM auth.users WHERE id = v_staff_14d_uid;
+
+        -- Verify no orphan remains in profiles
+        IF EXISTS (SELECT 1 FROM public.profiles WHERE phone_normalized = '9780030003') THEN
+            RAISE EXCEPTION 'FAIL: Test 14.4 orphan profile remained after rollback!';
+        END IF;
+
+        -- Now verify that v_phone_temp can be immediately used by a new user
+        INSERT INTO auth.users (
+            id,
+            instance_id,
+            aud,
+            role,
+            email,
+            encrypted_password,
+            email_confirmed_at,
+            raw_app_meta_data,
+            raw_user_meta_data,
+            created_at,
+            updated_at
+        ) VALUES (
+            gen_random_uuid(),
+            '00000000-0000-0000-0000-000000000000'::UUID,
+            'authenticated',
+            'authenticated',
+            'staff14d_new@test.pindcare.internal',
+            crypt('TemporaryPass123!', gen_salt('bf')),
+            NOW(),
+            '{}'::jsonb,
+            jsonb_build_object('full_name', 'Staff Reclaim', 'phone', v_phone_temp, 'role', 'technician'),
+            NOW(),
+            NOW()
+        );
+
+        v_t4_passed := TRUE;
+    EXCEPTION WHEN OTHERS THEN
+        RAISE EXCEPTION 'FAIL: Test 14.4 rollback and phone reuse failed: % (SQLSTATE %)', SQLERRM, SQLSTATE;
+    END;
+
+    -- --------------------------------------------------------------------------
+    -- 14.5: Customer duplicate protection blocks customer from taking staff phone
+    -- --------------------------------------------------------------------------
+    BEGIN
+        -- Attempt to register customer with staff 14A's phone
+        INSERT INTO auth.users (
+            id,
+            instance_id,
+            aud,
+            role,
+            email,
+            encrypted_password,
+            email_confirmed_at,
+            raw_app_meta_data,
+            raw_user_meta_data,
+            created_at,
+            updated_at
+        ) VALUES (
+            v_cust_14_uid,
+            '00000000-0000-0000-0000-000000000000'::UUID,
+            'authenticated',
+            'authenticated',
+            'cust14@test.pindcare.internal',
+            crypt('CustomerPass123!', gen_salt('bf')),
+            NOW(),
+            '{}'::jsonb,
+            jsonb_build_object('full_name', 'Customer Rogue', 'phone', v_phone_1, 'role', 'customer'),
+            NOW(),
+            NOW()
+        );
+        RAISE EXCEPTION 'FAIL: Test 14.5 customer was able to register with staff phone!';
+    EXCEPTION WHEN OTHERS THEN
+        v_err_msg := SQLERRM;
+        IF v_err_msg LIKE '%PHONE_ALREADY_REGISTERED%' OR v_err_msg LIKE '%already associated%' OR v_err_msg LIKE '%already registered%' OR v_err_msg LIKE '%idx_profiles_phone_normalized%' THEN
+            -- Verify it doesn't leak staff email to unauthenticated/customer context
+            IF v_err_msg NOT LIKE '%@test.pindcare.internal%' THEN
+                v_t5_passed := TRUE;
+            ELSE
+                RAISE EXCEPTION 'FAIL: Test 14.5 leaked staff email to customer: %', v_err_msg;
+            END IF;
+        ELSE
+            RAISE EXCEPTION 'FAIL: Test 14.5 unexpected error: % (SQLSTATE %)', v_err_msg, SQLSTATE;
+        END IF;
+    END;
+
+    -- Record passes as postgres
+    IF v_t1_passed THEN
+        PERFORM public.sec_test_record_pass('Test 14.1', 'staff provisioning sequence succeeds without self-collision (SEC-14)');
+    END IF;
+
+    IF v_t2_passed THEN
+        PERFORM public.sec_test_record_pass('Test 14.2', 'second staff with same phone is rejected (SEC-14)');
+    END IF;
+
+    IF v_t3_passed THEN
+        PERFORM public.sec_test_record_pass('Test 14.3', 'staff with distinct phone succeeds (SEC-14)');
+    END IF;
+
+    IF v_t4_passed THEN
+        PERFORM public.sec_test_record_pass('Test 14.4', 'failed staff provisioning rollback leaves no orphan holding phone (SEC-14)');
+    END IF;
+
+    IF v_t5_passed THEN
+        PERFORM public.sec_test_record_pass('Test 14.5', 'customer duplicate protection prevents claiming staff phone without leaking email (SEC-14)');
+    END IF;
+
+    IF NOT (v_t1_passed AND v_t2_passed AND v_t3_passed AND v_t4_passed AND v_t5_passed) THEN
+        RAISE EXCEPTION 'FAIL: Test 14 not all sub-tests passed';
+    END IF;
+END $$;
+
+-- ------------------------------------------------------------------------------
 -- FINAL TEST SUMMARY & RESULTS DISPLAY
 -- ------------------------------------------------------------------------------
 DO $$
@@ -1597,11 +2475,12 @@ BEGIN
     v_total_passed := COALESCE(NULLIF(current_setting('app.test_pass_count', true), ''), '0')::INT;
 
     RAISE NOTICE '====================================================================';
-    RAISE NOTICE 'SECURITY HARDENING TEST SUITE COMPLETE: % OF 34 TESTS PASSED.', v_total_passed;
+    RAISE NOTICE 'SECURITY HARDENING TEST SUITE COMPLETE: % OF 50 TESTS PASSED.', v_total_passed;
     RAISE NOTICE '====================================================================';
 END $$;
 
 DROP FUNCTION IF EXISTS public.sec_test_setup_user(UUID, TEXT, TEXT, TEXT, BOOLEAN);
+DROP FUNCTION IF EXISTS public.sec_test_become_anon();
 DROP FUNCTION IF EXISTS public.sec_test_become_user(UUID);
 DROP FUNCTION IF EXISTS public.sec_test_become_postgres();
 DROP FUNCTION IF EXISTS public.sec_test_record_pass(TEXT, TEXT);
@@ -1609,9 +2488,9 @@ DROP FUNCTION IF EXISTS public.sec_test_record_pass(TEXT, TEXT);
 -- Final single result row returned to the Supabase SQL Editor
 SELECT
     COALESCE(NULLIF(current_setting('app.test_pass_count', true), ''), '0')::INT AS tests_passed,
-    34 AS tests_expected,
+    50 AS tests_expected,
     CASE 
-        WHEN COALESCE(NULLIF(current_setting('app.test_pass_count', true), ''), '0')::INT = 34 
+        WHEN COALESCE(NULLIF(current_setting('app.test_pass_count', true), ''), '0')::INT = 50 
         THEN 'ALL TESTS PASSED' 
         ELSE 'MISMATCH - CHECK TESTS' 
     END AS status;

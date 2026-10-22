@@ -31,17 +31,18 @@ export const AuthModal: React.FC = () => {
   const {
     isAuthModalOpen,
     setIsAuthModalOpen,
+    authModalMode,
+    setAuthModalMode,
     currentRole,
     currentUser,
+    authProfile,
     currentEmployeeId,
     currentVendorId,
     employees,
     vendors,
-    loginCustomer,
+    login,
     registerCustomer,
-    logoutCustomer,
-    loginStaff,
-    logoutStaff,
+    logout,
     currentLocality,
     setCurrentPage,
     showToast,
@@ -52,19 +53,18 @@ export const AuthModal: React.FC = () => {
   const currentEmployee = employees.find((e) => e.id === currentEmployeeId);
   const currentVendor = vendors.find((v) => v.id === currentVendorId);
 
-  const [mode, setMode] = useState<'login' | 'register' | 'staff'>('login');
-  
-  // Login form state
+  const mode = authModalMode;
+  const setMode = setAuthModalMode;
+
+  // Login form state (Unified for all roles)
   const [loginEmail, setLoginEmail] = useState('');
   const [loginPassword, setLoginPassword] = useState('');
   const [showLoginPassword, setShowLoginPassword] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [isResetSending, setIsResetSending] = useState(false);
 
-  // Staff login state
-  const [staffEmail, setStaffEmail] = useState('');
-  const [staffPassword, setStaffPassword] = useState('');
-  const [showStaffPassword, setShowStaffPassword] = useState(false);
+  // Inline feedback state
+  const [loginError, setLoginError] = useState<string | null>(null);
 
   // Registration form state
   const [regName, setRegName] = useState('');
@@ -85,6 +85,7 @@ export const AuthModal: React.FC = () => {
   if (!isAuthModalOpen) return null;
 
   const isRoleLoggedIn =
+    !!authProfile ||
     (currentRole === 'customer' && !!currentUser) ||
     currentRole === 'employee' ||
     currentRole === 'technician' ||
@@ -94,18 +95,24 @@ export const AuthModal: React.FC = () => {
 
   const handleLoginSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    setLoginError(null);
     if (!loginEmail.trim() || !loginPassword.trim()) {
-      showToast('Please enter both email and password', 'error');
+      const err = 'Please enter both email and password';
+      setLoginError(err);
+      showToast(err, 'error');
       return;
     }
 
     setIsLoading(true);
-    const success = await loginCustomer(loginEmail.trim(), loginPassword.trim());
+    const result = await login(loginEmail.trim(), loginPassword.trim());
     setIsLoading(false);
-    if (success) {
+    if (result.success) {
+      setLoginError(null);
       setIsAuthModalOpen(false);
       setLoginEmail('');
       setLoginPassword('');
+    } else {
+      setLoginError(result.message || 'Incorrect email or password. Please verify your credentials and try again.');
     }
   };
 
@@ -130,23 +137,6 @@ export const AuthModal: React.FC = () => {
       showToast('Failed to send recovery email. Please try again.', 'error');
     } finally {
       setIsResetSending(false);
-    }
-  };
-
-  const handleStaffLoginSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!staffEmail.trim() || !staffPassword.trim()) {
-      showToast('Please enter staff email and password', 'error');
-      return;
-    }
-
-    setIsLoading(true);
-    const success = await loginStaff(staffEmail.trim(), staffPassword.trim());
-    setIsLoading(false);
-    if (success) {
-      setIsAuthModalOpen(false);
-      setStaffEmail('');
-      setStaffPassword('');
     }
   };
 
@@ -259,11 +249,9 @@ export const AuthModal: React.FC = () => {
                   ? 'Operations Command Lead'
                   : currentUser
                   ? 'Resident Account'
-                  : mode === 'staff'
-                  ? 'Staff & Partner Sign In'
-                  : mode === 'login'
-                  ? 'Resident Sign In'
-                  : 'Create Resident Account'}
+                  : mode === 'register'
+                  ? 'Sign up'
+                  : 'Sign in'}
               </h2>
               <p className="text-[11px] text-[#b6efd1]/90">
                 UrbanCare Solution · Your Space | Our Care
@@ -329,13 +317,13 @@ export const AuthModal: React.FC = () => {
                     </button>
                     <button
                       onClick={async () => {
-                        await logoutStaff();
+                        await logout();
                         setIsAuthModalOpen(false);
                       }}
                       className="w-full py-2 px-4 rounded-xl border border-red-200 text-red-700 hover:bg-red-50 font-bold text-xs flex items-center justify-center space-x-2 transition-all cursor-pointer"
                     >
                       <LogOut className="w-4 h-4" />
-                      <span>Sign Out of Technician Hub</span>
+                      <span>Logout</span>
                     </button>
                   </div>
                 </div>
@@ -380,13 +368,13 @@ export const AuthModal: React.FC = () => {
                     </button>
                     <button
                       onClick={async () => {
-                        await logoutStaff();
+                        await logout();
                         setIsAuthModalOpen(false);
                       }}
                       className="w-full py-2 px-4 rounded-xl border border-red-200 text-red-700 hover:bg-red-50 font-bold text-xs flex items-center justify-center space-x-2 transition-all cursor-pointer"
                     >
                       <LogOut className="w-4 h-4" />
-                      <span>Sign Out of Vendor Hub</span>
+                      <span>Logout</span>
                     </button>
                   </div>
                 </div>
@@ -424,13 +412,13 @@ export const AuthModal: React.FC = () => {
                     </button>
                     <button
                       onClick={async () => {
-                        await logoutStaff();
+                        await logout();
                         setIsAuthModalOpen(false);
                       }}
                       className="w-full py-2 px-4 rounded-xl border border-red-200 text-red-700 hover:bg-red-50 font-bold text-xs flex items-center justify-center space-x-2 transition-all cursor-pointer"
                     >
                       <LogOut className="w-4 h-4" />
-                      <span>Sign Out of Operations Command</span>
+                      <span>Logout</span>
                     </button>
                   </div>
                 </div>
@@ -487,60 +475,60 @@ export const AuthModal: React.FC = () => {
 
                     <button
                       onClick={async () => {
-                        await logoutCustomer();
+                        await logout();
+                        setIsAuthModalOpen(false);
                       }}
                       className="w-full py-2.5 px-4 rounded-xl border border-red-200 text-red-700 hover:bg-red-50 font-bold text-xs flex items-center justify-center space-x-2 transition-all cursor-pointer"
                     >
                       <LogOut className="w-4 h-4" />
-                      <span>Sign Out of Account</span>
+                      <span>Logout</span>
                     </button>
                   </div>
                 </div>
               )}
             </div>
           ) : (
-            /* IF LOGGED OUT: RESIDENT SIGN IN, REGISTER, OR STAFF PORTAL TABS */
+            /* IF LOGGED OUT: UNIFIED SIGN IN OR RESIDENT SIGN UP */
             <>
               {/* Tab Selector */}
               <div className="flex rounded-xl bg-[#f2f3ff] p-1 border border-[#c0c9c2]/40">
                 <button
                   type="button"
-                  onClick={() => setMode('login')}
+                  onClick={() => { setMode('login'); setLoginError(null); }}
                   className={`flex-1 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
                     mode === 'login'
                       ? 'bg-white text-[#003523] shadow-xs'
                       : 'text-[#707973] hover:text-[#131b2e]'
                   }`}
                 >
-                  Resident Sign In
+                  Sign in
                 </button>
                 <button
                   type="button"
-                  onClick={() => setMode('register')}
+                  onClick={() => { setMode('register'); setLoginError(null); }}
                   className={`flex-1 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
                     mode === 'register'
                       ? 'bg-white text-[#003523] shadow-xs'
                       : 'text-[#707973] hover:text-[#131b2e]'
                   }`}
                 >
-                  Registration
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setMode('staff')}
-                  className={`flex-1 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
-                    mode === 'staff'
-                      ? 'bg-white text-[#003523] shadow-xs'
-                      : 'text-[#707973] hover:text-[#131b2e]'
-                  }`}
-                >
-                  Staff Hub
+                  Sign up
                 </button>
               </div>
 
               {/* 1. RESIDENT LOGIN TAB */}
               {mode === 'login' && (
                 <form onSubmit={handleLoginSubmit} className="space-y-3.5 pt-1">
+                  {loginError && (
+                    <div className="p-3 rounded-xl bg-red-50 border border-red-200 text-red-700 text-xs flex items-start space-x-2 animate-shake">
+                      <AlertCircle className="w-4 h-4 text-red-500 shrink-0 mt-0.5" />
+                      <div className="flex-1">
+                        <p className="font-bold">Authentication Failed</p>
+                        <p className="text-[11px] text-red-600 mt-0.5 leading-snug">{loginError}</p>
+                      </div>
+                    </div>
+                  )}
+
                   <div>
                     <label className="block text-xs font-bold text-[#131b2e] mb-1">
                       Email Address *
@@ -551,7 +539,10 @@ export const AuthModal: React.FC = () => {
                         type="email"
                         required
                         value={loginEmail}
-                        onChange={(e) => setLoginEmail(e.target.value)}
+                        onChange={(e) => {
+                          setLoginEmail(e.target.value);
+                          if (loginError) setLoginError(null);
+                        }}
                         placeholder="e.g. resident@gmail.com"
                         className="w-full pl-9 pr-3 py-2 rounded-xl border border-[#c0c9c2] text-xs font-semibold focus:border-[#003523] focus:ring-1 focus:ring-[#003523]"
                       />
@@ -578,7 +569,10 @@ export const AuthModal: React.FC = () => {
                         type={showLoginPassword ? 'text' : 'password'}
                         required
                         value={loginPassword}
-                        onChange={(e) => setLoginPassword(e.target.value)}
+                        onChange={(e) => {
+                          setLoginPassword(e.target.value);
+                          if (loginError) setLoginError(null);
+                        }}
                         placeholder="Enter your account password"
                         className="w-full pl-9 pr-9 py-2 rounded-xl border border-[#c0c9c2] text-xs font-semibold focus:border-[#003523] focus:ring-1 focus:ring-[#003523]"
                       />
@@ -603,10 +597,24 @@ export const AuthModal: React.FC = () => {
                     ) : (
                       <>
                         <CheckCircle2 className="w-3.5 h-3.5" />
-                        <span>Sign In with Password</span>
+                        <span>Sign in</span>
                       </>
                     )}
                   </button>
+
+                  <div className="pt-1 text-center text-xs text-[#707973]">
+                    <span>Need a resident account? </span>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setMode('register');
+                        setLoginError(null);
+                      }}
+                      className="font-bold text-[#003523] hover:underline cursor-pointer"
+                    >
+                      Sign up
+                    </button>
+                  </div>
 
                   <p className="text-[10px] text-[#707973] text-center pt-0.5">
                     By signing in, you acknowledge our{' '}
@@ -836,78 +844,17 @@ export const AuthModal: React.FC = () => {
                       </>
                     )}
                   </button>
-                </form>
-              )}
 
-              {/* 3. STAFF & PARTNER PORTAL TAB */}
-              {mode === 'staff' && (
-                <form onSubmit={handleStaffLoginSubmit} className="space-y-3.5 pt-1">
-                  <div className="p-3 bg-[#f2f3ff] rounded-xl border border-[#c0c9c2]/50 text-xs text-[#404943]">
-                    <p className="font-bold text-[#003523] mb-1 flex items-center space-x-1.5">
-                      <ShieldCheck className="w-4 h-4 text-[#003523]" />
-                      <span>Role-Protected Staff & Trade Partner Sign In</span>
-                    </p>
-                    <p className="text-[11px] text-[#707973] leading-relaxed">
-                      Staff accounts are provisioned by Operations. Sign in with your assigned staff email and password.
-                    </p>
+                  <div className="pt-1.5 text-center text-xs text-[#707973]">
+                    <span>Already have an account? </span>
+                    <button
+                      type="button"
+                      onClick={() => setMode('login')}
+                      className="font-bold text-[#003523] hover:underline cursor-pointer"
+                    >
+                      Sign in
+                    </button>
                   </div>
-
-                  <div>
-                    <label className="block text-xs font-bold text-[#131b2e] mb-1">
-                      Staff Email Address *
-                    </label>
-                    <div className="relative">
-                      <Mail className="w-4 h-4 text-[#707973] absolute left-3 top-2.5" />
-                      <input
-                        type="email"
-                        required
-                        value={staffEmail}
-                        onChange={(e) => setStaffEmail(e.target.value)}
-                        placeholder="e.g. employee@urbancaresolution.in"
-                        className="w-full pl-9 pr-3 py-2 rounded-xl border border-[#c0c9c2] text-xs font-semibold focus:border-[#003523] focus:ring-1 focus:ring-[#003523]"
-                      />
-                    </div>
-                  </div>
-
-                  <div>
-                    <label className="block text-xs font-bold text-[#131b2e] mb-1">
-                      Password *
-                    </label>
-                    <div className="relative">
-                      <Lock className="w-4 h-4 text-[#707973] absolute left-3 top-2.5" />
-                      <input
-                        type={showStaffPassword ? 'text' : 'password'}
-                        required
-                        value={staffPassword}
-                        onChange={(e) => setStaffPassword(e.target.value)}
-                        placeholder="Enter your staff password"
-                        className="w-full pl-9 pr-9 py-2 rounded-xl border border-[#c0c9c2] text-xs font-semibold focus:border-[#003523] focus:ring-1 focus:ring-[#003523]"
-                      />
-                      <button
-                        type="button"
-                        onClick={() => setShowStaffPassword(!showStaffPassword)}
-                        className="absolute right-3 top-2.5 text-gray-400 hover:text-gray-600 cursor-pointer"
-                        title={showStaffPassword ? 'Hide password' : 'Show password'}
-                      >
-                        {showStaffPassword ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
-                      </button>
-                    </div>
-                  </div>
-
-                  <button
-                    type="submit"
-                    disabled={isLoading || !staffEmail.trim() || !staffPassword.trim()}
-                    className="w-full py-2.5 rounded-xl bg-[#003523] hover:bg-[#144d37] disabled:opacity-50 text-white font-bold text-xs flex items-center justify-center space-x-1.5 transition-all shadow-xs cursor-pointer"
-                  >
-                    {isLoading ? (
-                      <span>Verifying credentials...</span>
-                    ) : (
-                      <>
-                        <KeyRound className="w-3.5 h-3.5 text-[#b6efd1]" />
-                        <span>Sign In to Staff Workspace</span>
-                      </>
-                    )}
-                  </button>
                 </form>
               )}
             </>

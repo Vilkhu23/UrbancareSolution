@@ -11,11 +11,29 @@ export const NotAuthorizedPage: React.FC<NotAuthorizedPageProps> = ({
   requiredRoleName,
   portalName,
 }) => {
-  const { currentRole, setCurrentPage, logoutStaff, setIsAuthModalOpen } = useApp();
+  const { authProfile, currentRole, setCurrentPage, logout, openAuthModal } = useApp();
+
+  const handleGoToDashboard = () => {
+    const role = authProfile?.role || (
+      currentRole === 'employee' ? 'technician' :
+      currentRole === 'vendor' ? 'vendor' :
+      currentRole === 'operations' || currentRole === 'admin' ? 'ops_manager' :
+      'customer'
+    );
+    if (role === 'technician') {
+      setCurrentPage('employee');
+    } else if (role === 'vendor') {
+      setCurrentPage('vendor');
+    } else if (role === 'ops_manager' || role === 'admin') {
+      setCurrentPage('admin');
+    } else {
+      setCurrentPage('home');
+    }
+  };
 
   const handleSwitchAccount = async () => {
-    await logoutStaff();
-    setIsAuthModalOpen(true);
+    await logout();
+    openAuthModal('login');
   };
 
   return (
@@ -35,15 +53,23 @@ export const NotAuthorizedPage: React.FC<NotAuthorizedPageProps> = ({
           </h1>
           <p className="text-xs text-[#707973] leading-relaxed">
             This workspace requires <span className="font-bold text-[#131b2e]">{requiredRoleName}</span> privileges. 
-            Your current authenticated account role is <span className="font-mono font-bold text-red-700">{currentRole}</span>.
+            Your current authenticated account role is <span className="font-mono font-bold text-red-700">{authProfile?.role || currentRole}</span>.
           </p>
         </div>
 
         <div className="pt-2 flex flex-col sm:flex-row items-center justify-center gap-2.5">
           <button
             type="button"
+            onClick={handleGoToDashboard}
+            className="w-full sm:w-auto px-5 py-2.5 rounded-xl bg-[#003523] hover:bg-[#144d37] text-white text-xs font-bold transition-all shadow-xs flex items-center justify-center space-x-1.5 cursor-pointer"
+          >
+            <span>Go to my dashboard</span>
+          </button>
+
+          <button
+            type="button"
             onClick={() => setCurrentPage('home')}
-            className="w-full sm:w-auto px-4 py-2.5 rounded-xl bg-gray-100 hover:bg-gray-200 text-[#131b2e] text-xs font-semibold transition-colors flex items-center justify-center space-x-1.5"
+            className="w-full sm:w-auto px-4 py-2.5 rounded-xl bg-gray-100 hover:bg-gray-200 text-[#131b2e] text-xs font-semibold transition-colors flex items-center justify-center space-x-1.5 cursor-pointer"
           >
             <ArrowLeft className="w-3.5 h-3.5" />
             <span>Return to Home</span>
@@ -52,7 +78,7 @@ export const NotAuthorizedPage: React.FC<NotAuthorizedPageProps> = ({
           <button
             type="button"
             onClick={handleSwitchAccount}
-            className="w-full sm:w-auto px-4 py-2.5 rounded-xl bg-[#003523] hover:bg-[#144d37] text-white text-xs font-bold transition-all shadow-xs flex items-center justify-center space-x-1.5"
+            className="w-full sm:w-auto px-4 py-2.5 rounded-xl border border-gray-300 hover:bg-gray-50 text-gray-700 text-xs font-bold transition-all flex items-center justify-center space-x-1.5 cursor-pointer"
           >
             <LogOut className="w-3.5 h-3.5" />
             <span>Switch Account</span>

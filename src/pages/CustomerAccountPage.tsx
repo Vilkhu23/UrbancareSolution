@@ -43,8 +43,8 @@ export const CustomerAccountPage: React.FC = () => {
     currentUser,
     setCurrentUser,
     setCurrentPage,
-    setIsAuthModalOpen,
-    logoutCustomer,
+    openAuthModal,
+    logout,
     showToast,
     dpdpConsent,
     dpdpNominee,
@@ -54,6 +54,7 @@ export const CustomerAccountPage: React.FC = () => {
     setIsDPDPConsentManagerOpen,
     setIsDPDPDataRightsOpen,
     isLoadingData,
+    isAuthLoading,
     dataLoadError
   } = useApp();
 
@@ -71,14 +72,25 @@ export const CustomerAccountPage: React.FC = () => {
   // If user is not logged in (e.g. after logout or back-button navigation),
   // strictly prevent private data exposure and render a clean auth prompt.
   if (!currentUser) {
+    if (isAuthLoading) {
+      return (
+        <div className="min-h-[50vh] flex items-center justify-center">
+          <div className="flex flex-col items-center space-y-3 p-8 bg-white/90 rounded-2xl border border-emerald-100 shadow-sm">
+            <div className="w-8 h-8 border-3 border-[#003523] border-t-transparent rounded-full animate-spin" />
+            <span className="text-xs font-semibold text-[#003523]">Restoring resident profile...</span>
+          </div>
+        </div>
+      );
+    }
+
     return (
       <div className="max-w-md mx-auto my-16 p-8 bg-white rounded-3xl border border-gray-200 shadow-xl text-center space-y-4 animate-scaleUp">
         <div className="w-14 h-14 bg-emerald-50 text-[#003523] rounded-2xl flex items-center justify-center mx-auto border border-emerald-100">
           <User className="w-7 h-7" />
         </div>
-        <h2 className="text-lg font-bold text-[#131b2e]">Resident Sign In Required</h2>
+        <h2 className="text-lg font-bold text-[#131b2e]">Sign In Required</h2>
         <p className="text-xs text-[#707973] leading-relaxed">
-          Please sign in to view your resident profile, active booking status, and warranty records.
+          Please sign in to view your profile, active booking status, and warranty records.
         </p>
         <div className="pt-2 flex flex-col sm:flex-row items-center justify-center gap-2">
           <button
@@ -88,10 +100,10 @@ export const CustomerAccountPage: React.FC = () => {
             Return to Home
           </button>
           <button
-            onClick={() => setIsAuthModalOpen(true)}
+            onClick={() => openAuthModal('login', 'account')}
             className="w-full sm:w-auto px-4 py-2.5 rounded-xl bg-[#003523] hover:bg-[#144d37] text-white text-xs font-bold transition-all shadow-xs cursor-pointer"
           >
-            Sign In / Register
+            Sign in
           </button>
         </div>
       </div>
@@ -248,7 +260,7 @@ export const CustomerAccountPage: React.FC = () => {
           </button>
 
           <button
-            onClick={() => setIsAuthModalOpen(true)}
+            onClick={() => openAuthModal('login', 'account')}
             className="text-xs font-semibold px-3 py-1.5 rounded-xl border border-[#c0c9c2]/60 hover:bg-[#f2f3ff] text-[#131b2e] transition-colors cursor-pointer"
           >
             Switch Account
@@ -260,7 +272,7 @@ export const CustomerAccountPage: React.FC = () => {
           </div>
 
           <button
-            onClick={logoutCustomer}
+            onClick={() => logout()}
             className="flex items-center space-x-1.5 px-3 py-1.5 rounded-xl bg-red-50 hover:bg-red-100 text-red-700 border border-red-200 text-xs font-bold transition-colors cursor-pointer"
             title="Log out of account"
           >
