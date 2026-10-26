@@ -65,8 +65,14 @@ import {
   syncOpsSettingsToSupabase,
   syncHomeProjectToSupabase,
   syncCustomerReviewToSupabase,
+  syncServiceToSupabase,
+  deleteServiceFromSupabase,
+  syncServicePackageToSupabase,
+  deleteServicePackageFromSupabase,
   updateServiceRequestInSupabase,
   mapServiceRequestFromDb,
+  mapServiceItemFromDb,
+  mapServicePackageFromDb,
   verifyJobOtpViaRpc,
   recordPaymentViaRpc
 } from '../services/supabaseService';
@@ -85,18 +91,26 @@ interface AppContextType {
   setCurrentLocality: (loc: string) => void;
   currentPage: string;
   setCurrentPage: (page: string) => void;
+  accountTab: 'overview' | 'bookings' | 'projects' | 'addresses' | 'dpdp';
+  setAccountTab: (tab: 'overview' | 'bookings' | 'projects' | 'addresses' | 'dpdp') => void;
   toasts: ToastMessage[];
   showToast: (text: string, type?: 'success' | 'info' | 'warning' | 'error') => void;
   dismissToast: (id: string) => void;
 
   // Catalog & Pricing Engine
+  selectedCategory: string;
+  setSelectedCategory: (cat: string) => void;
+  serviceSearchQuery: string;
+  setServiceSearchQuery: (query: string) => void;
   services: ServiceItem[];
   packages: ServicePackage[];
   priceHistory: PriceHistoryRecord[];
   updateServicePricing: (id: string, updates: Partial<ServiceItem>, reason?: string, changedBy?: string) => void;
   toggleServiceActive: (id: string) => void;
   addService: (service: ServiceItem) => void;
+  deleteService: (id: string) => Promise<boolean>;
   updatePackage: (id: string, updates: Partial<ServicePackage>) => void;
+  deletePackage: (id: string) => Promise<boolean>;
 
   // Cart
   cart: CartItem[];
@@ -333,8 +347,8 @@ interface AppContextType {
 const AppContext = createContext<AppContextType | undefined>(undefined);
 
 const STORAGE_KEYS = {
-  SERVICES: 'pindcare_services_v1',
-  PACKAGES: 'pindcare_packages_v1',
+  SERVICES: 'pindcare_services_v2',
+  PACKAGES: 'pindcare_packages_v2',
   REQUESTS: 'pindcare_requests_v1',
   VENDORS: 'pindcare_vendors_v1',
   EMPLOYEES: 'pindcare_employees_v1',
@@ -406,6 +420,11 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   // Track initial auth restoration from Supabase to prevent flashing unauthenticated states on refresh
   const [isAuthLoading, setIsAuthLoading] = useState<boolean>(isSupabaseConfigured());
+
+  // Category and Search query state shared with services catalog
+  const [selectedCategory, setSelectedCategory] = useState<string>('AC & Appliances');
+  const [serviceSearchQuery, setServiceSearchQuery] = useState<string>('');
+  const [accountTab, setAccountTab] = useState<'overview' | 'bookings' | 'projects' | 'addresses' | 'dpdp'>('overview');
 
   // Initialize currentPage from URL path or stored page key, fallback to 'home'
   const [currentPage, setCurrentPageState] = useState<string>(() => {
@@ -561,9 +580,11 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     if (!saved) return INITIAL_SERVICES;
     try {
       const parsed: ServiceItem[] = JSON.parse(saved);
-      const existingIds = new Set(parsed.map((s) => s.id));
+      const validIds = new Set(INITIAL_SERVICES.map((s) => s.id));
+      const filtered = parsed.filter((s) => validIds.has(s.id));
+      const existingIds = new Set(filtered.map((s) => s.id));
       const missing = INITIAL_SERVICES.filter((s) => !existingIds.has(s.id));
-      return missing.length > 0 ? [...parsed, ...missing] : parsed;
+      return missing.length > 0 ? [...filtered, ...missing] : filtered;
     } catch {
       return INITIAL_SERVICES;
     }
@@ -585,7 +606,15 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const [packages, setPackages] = useState<ServicePackage[]>(() => {
     if (!isDemoFallbackAllowed) return [];
     const saved = localStorage.getItem(STORAGE_KEYS.PACKAGES);
-    return saved ? JSON.parse(saved) : INITIAL_PACKAGES;
+    if (!saved) return INITIAL_PACKAGES;
+    try {
+      const parsed: ServicePackage[] = JSON.parse(saved);
+      const validIds = new Set(INITIAL_PACKAGES.map((p) => p.id));
+      const filtered = parsed.filter((p) => validIds.has(p.id));
+      return filtered.length > 0 ? filtered : INITIAL_PACKAGES;
+    } catch {
+      return INITIAL_PACKAGES;
+    }
   });
 
   // Requests
@@ -1009,6 +1038,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           if (matched) setCurrentVendorIdState(matched.id);
         }
         if (roleData.requests) setRequests(roleData.requests);
+        if (roleData.services) setServices(roleData.services);
+        if (roleData.packages) setPackages(roleData.packages);
         if (roleData.ledger) setOpportunityLedger(roleData.ledger);
         if (roleData.complaints) setComplaints(roleData.complaints);
         if (roleData.payments) setPayments(roleData.payments);
@@ -1060,6 +1091,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
             if (catalog?.services && catalog.services.length > 0 && isMounted) {
               setServices(catalog.services);
             }
+            if (catalog?.packages && catalog.packages.length > 0 && isMounted) {
+              setPackages(catalog.packages);
+            }
           } catch (err: any) {
             if (isMounted) {
               console.error('Failed to load public catalog:', err);
@@ -1076,10 +1110,10 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
     bootstrapCatalog();
 
-    // Supabase Realtime channel for live bookings & dispatch updates
+    // Supabase Realtime channel for live bookings, services & packages
     if (isSupabaseConfigured()) {
       const channel = supabase
-        .channel('public:service_requests_realtime')
+        .channel('public:app_realtime_sync')
         .on(
           'postgres_changes',
           { event: '*', schema: 'public', table: 'service_requests' },
@@ -1090,6 +1124,46 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
             } else if (payload.eventType === 'UPDATE' && payload.new) {
               const mapped = mapServiceRequestFromDb(payload.new);
               setRequests((prev) => prev.map((r) => (r.id === mapped.id ? mapped : r)));
+            }
+          }
+        )
+        .on(
+          'postgres_changes',
+          { event: '*', schema: 'public', table: 'services' },
+          (payload) => {
+            if (payload.eventType === 'INSERT' || payload.eventType === 'UPDATE') {
+              const mapped = mapServiceItemFromDb(payload.new);
+              setServices((prev) => {
+                const idx = prev.findIndex((s) => s.id === mapped.id);
+                if (idx >= 0) {
+                  const updated = [...prev];
+                  updated[idx] = mapped;
+                  return updated;
+                }
+                return [mapped, ...prev];
+              });
+            } else if (payload.eventType === 'DELETE' && payload.old) {
+              setServices((prev) => prev.filter((s) => s.id !== (payload.old as any).id));
+            }
+          }
+        )
+        .on(
+          'postgres_changes',
+          { event: '*', schema: 'public', table: 'service_packages' },
+          (payload) => {
+            if (payload.eventType === 'INSERT' || payload.eventType === 'UPDATE') {
+              const mapped = mapServicePackageFromDb(payload.new);
+              setPackages((prev) => {
+                const idx = prev.findIndex((p) => p.id === mapped.id);
+                if (idx >= 0) {
+                  const updated = [...prev];
+                  updated[idx] = mapped;
+                  return updated;
+                }
+                return [mapped, ...prev];
+              });
+            } else if (payload.eventType === 'DELETE' && payload.old) {
+              setPackages((prev) => prev.filter((p) => p.id !== (payload.old as any).id));
             }
           }
         )
@@ -1258,6 +1332,11 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       timestamp: new Date().toLocaleString('en-IN', { dateStyle: 'short', timeStyle: 'short' })
     };
     setAuditLogs((prev) => [newLog, ...prev]);
+    if (isSupabaseConfigured()) {
+      syncAuditLogToSupabase(newLog).catch((err) => {
+        console.warn('Supabase audit log sync notice:', err);
+      });
+    }
   };
 
   const addCustomer = (customer: CustomerRecord) => {
@@ -1841,8 +1920,15 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }
 
     // Immediately update customer-facing catalog
+    let updatedService: ServiceItem | undefined;
     setServices((prev) =>
-      prev.map((s) => (s.id === id ? normalizeServiceItem({ ...s, ...updates }) : s))
+      prev.map((s) => {
+        if (s.id === id) {
+          updatedService = normalizeServiceItem({ ...s, ...updates });
+          return updatedService;
+        }
+        return s;
+      })
     );
 
     // Sync in-flight cart items
@@ -1866,13 +1952,31 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       `Updated ${currentService.name} (${Object.keys(updates).join(', ')}). Reason: ${reason || 'Rate modification'}`
     );
     showToast(`Updated pricing for ${currentService.name}`, 'success');
+
+    if (isSupabaseConfigured() && updatedService) {
+      syncServiceToSupabase(updatedService).catch((err) => {
+        console.error('Failed to sync service pricing update to Supabase:', err);
+      });
+    }
   };
 
   const toggleServiceActive = (id: string) => {
+    let targetService: ServiceItem | undefined;
     setServices((prev) =>
-      prev.map((s) => (s.id === id ? { ...s, active: !s.active } : s))
+      prev.map((s) => {
+        if (s.id === id) {
+          targetService = { ...s, active: !s.active };
+          return targetService;
+        }
+        return s;
+      })
     );
     showToast(`Service visibility updated`, 'info');
+    if (isSupabaseConfigured() && targetService) {
+      syncServiceToSupabase(targetService).catch((err) => {
+        console.error('Failed to sync service visibility to Supabase:', err);
+      });
+    }
   };
 
   const addService = (newService: ServiceItem) => {
@@ -1880,13 +1984,71 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     setServices((prev) => [normalized, ...prev]);
     addAuditEntry('SERVICE_CREATED', 'PRICING', normalized.id, `Created service: ${normalized.name}`);
     showToast(`New service added to catalog`, 'success');
+    if (isSupabaseConfigured()) {
+      syncServiceToSupabase(normalized).catch((err) => {
+        console.error('Failed to sync new service to Supabase:', err);
+      });
+    }
+  };
+
+  const deleteService = async (id: string): Promise<boolean> => {
+    const target = services.find((s) => s.id === id);
+    const serviceName = target?.name || id;
+
+    // Immediately remove from customer-facing state & cart
+    setServices((prev) => prev.filter((s) => s.id !== id));
+    setCart((prev) => prev.filter((item) => item.serviceId !== id));
+
+    addAuditEntry('SERVICE_DELETED', 'PRICING', id, `Deleted service: ${serviceName}`);
+    showToast(`Deleted service: ${serviceName}`, 'info');
+
+    if (isSupabaseConfigured()) {
+      const ok = await deleteServiceFromSupabase(id);
+      if (!ok) {
+        showToast('Notice: Could not permanently delete from Supabase.', 'error');
+        return false;
+      }
+    }
+    return true;
   };
 
   const updatePackage = (id: string, updates: Partial<ServicePackage>) => {
+    let targetPkg: ServicePackage | undefined;
     setPackages((prev) =>
-      prev.map((p) => (p.id === id ? { ...p, ...updates } : p))
+      prev.map((p) => {
+        if (p.id === id) {
+          targetPkg = { ...p, ...updates };
+          return targetPkg;
+        }
+        return p;
+      })
     );
     showToast(`Care package updated`, 'success');
+    if (isSupabaseConfigured() && targetPkg) {
+      syncServicePackageToSupabase(targetPkg).catch((err) => {
+        console.error('Failed to sync care package to Supabase:', err);
+      });
+    }
+  };
+
+  const deletePackage = async (id: string): Promise<boolean> => {
+    const target = packages.find((p) => p.id === id);
+    const packageName = target?.name || id;
+
+    setPackages((prev) => prev.filter((p) => p.id !== id));
+    setCart((prev) => prev.filter((item) => item.serviceId !== id));
+
+    addAuditEntry('PACKAGE_DELETED', 'PRICING', id, `Deleted package: ${packageName}`);
+    showToast(`Deleted package: ${packageName}`, 'info');
+
+    if (isSupabaseConfigured()) {
+      const ok = await deleteServicePackageFromSupabase(id);
+      if (!ok) {
+        showToast('Notice: Could not permanently delete package from Supabase.', 'error');
+        return false;
+      }
+    }
+    return true;
   };
 
   // Cart operations
@@ -3585,6 +3747,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         setCurrentLocality,
         currentPage,
         setCurrentPage,
+        accountTab,
+        setAccountTab,
         toasts,
         showToast,
         dismissToast,
@@ -3594,7 +3758,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         updateServicePricing,
         toggleServiceActive,
         addService,
+        deleteService,
         updatePackage,
+        deletePackage,
         cart,
         addToCart,
         addPackageToCart,
@@ -3707,7 +3873,11 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         isLoadingData,
         isAuthLoading,
         dataLoadError,
-        reloadUserData
+        reloadUserData,
+        selectedCategory,
+        setSelectedCategory,
+        serviceSearchQuery,
+        setServiceSearchQuery
       }}
     >
       {children}

@@ -1,65 +1,220 @@
 import React from 'react';
 import { useApp } from '../../context/AppContext';
-import { Phone, MessageCircle, ArrowRight } from 'lucide-react';
+import { Home, Layers, CalendarCheck, User, MessageCircle, Phone } from 'lucide-react';
 
 /**
- * Mobile Sticky Bottom Bar:
- * Provides the required high-conversion action bar on mobile viewports (<768px):
- * [ Call | WhatsApp | Book Now ]
+ * Mobile-First Fixed Bottom Navigation:
+ * - Exactly 4 tabs: [ Home | Services | Bookings | Account ]
+ * - High-contrast Forest Green (#0F3D2E) active indicators with clean typography.
+ * - Live active booking badge counter.
+ * - Preserves instant WhatsApp & Call access via unobtrusive quick support trigger.
+ * - Safe-area inset aware for modern mobile displays.
  */
 export const BottomNav: React.FC = () => {
   const {
     currentPage,
     setCurrentPage,
-    currentRole
+    accountTab,
+    setAccountTab,
+    currentUser,
+    authProfile,
+    requests,
+    setActiveTrackingRequestId,
+    isCartDrawerOpen,
+    isAuthModalOpen,
+    isCustomTaskModalOpen,
+    isProjectModalOpen,
+    isLocalityModalOpen,
+    selectedDetailServiceId
   } = useApp();
 
-  // Hide sticky bottom bar on dedicated staff portals
+  // Hide sticky bottom bar on dedicated staff portals (they have their own internal navigation)
   if (currentPage === 'admin' || currentPage === 'vendor' || currentPage === 'employee') {
     return null;
   }
 
-  const handleBookNow = () => {
-    setCurrentPage('services');
-    window.scrollTo({ top: 0, behavior: 'smooth' });
+  const isStaff = authProfile?.role && authProfile.role !== 'customer';
+  const staffPortalTarget =
+    authProfile?.role === 'technician' ? 'employee' :
+    authProfile?.role === 'vendor' ? 'vendor' :
+    'admin';
+
+  // Count active customer bookings for the badge counter
+  const activeBookingsCount = requests.filter(
+    (r) => r.status !== 'COMPLETED' && r.status !== 'CANCELLED' && r.status !== 'CLOSED'
+  ).length;
+
+  const activeCustomerOrder = requests.find(
+    (r) => r.status !== 'COMPLETED' && r.status !== 'CANCELLED' && r.status !== 'CLOSED'
+  );
+
+  const handleNav = (target: 'home' | 'services' | 'bookings' | 'account') => {
+    if (target === 'home') {
+      setCurrentPage('home');
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+    } else if (target === 'services') {
+      setCurrentPage('services');
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+    } else if (target === 'bookings') {
+      if (activeCustomerOrder && !currentUser) {
+        setActiveTrackingRequestId(activeCustomerOrder.id);
+      } else {
+        setAccountTab('bookings');
+        setCurrentPage('account');
+        window.scrollTo({ top: 0, behavior: 'smooth' });
+      }
+    } else if (target === 'account') {
+      if (isStaff) {
+        setCurrentPage(staffPortalTarget);
+      } else {
+        setAccountTab('overview');
+        setCurrentPage('account');
+      }
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+    }
   };
 
+  const isHomeActive = currentPage === 'home';
+  const isServicesActive = currentPage === 'services';
+  const isBookingsActive = currentPage === 'account' && accountTab === 'bookings';
+  const isAccountActive =
+    (currentPage === 'account' && accountTab !== 'bookings') ||
+    currentPage === staffPortalTarget;
+
   return (
-    <aside
-      aria-label="Mobile quick action bar"
-      className="md:hidden fixed bottom-0 left-0 right-0 z-40 bg-white/98 backdrop-blur-md border-t border-gray-200/80 px-3 py-2 shadow-[0_-4px_16px_rgba(0,0,0,0.08)] flex items-center justify-between gap-2 safe-bottom"
-    >
-      {/* 1. Direct Click-to-Call */}
-      <a
-        href="tel:+918284018909"
-        className="flex-1 flex items-center justify-center space-x-1.5 py-2.5 px-2 rounded-xl border border-gray-200 bg-gray-50/80 text-[#0F3D2E] hover:bg-gray-100 active:scale-[0.98] transition-all text-xs font-semibold focus-visible:ring-2 focus-visible:ring-[#0F3D2E] focus-visible:outline-none min-h-[44px]"
-        aria-label="Call UrbanCare Support +91 8284018909"
-      >
-        <Phone className="w-4 h-4 text-[#0F3D2E] shrink-0" />
-        <span>Call</span>
-      </a>
+    <>
+      {/* Quick Floating WhatsApp Support Trigger:
+          - Automatically hidden when any modal or drawer is open so it NEVER obstructs checkout, basket, or modal content.
+          - Positioned with calc(68px + env(safe-area-inset-bottom, 0px)) so it clears the fixed bottom navigation (56px) and respects modern safe areas.
+          - Kept at z-30 (below bottom nav's z-40 and modal overlays' z-50) so it never clips or overlaps other controls.
+      */}
+      {!isCartDrawerOpen && !isAuthModalOpen && !isCustomTaskModalOpen && !isProjectModalOpen && !isLocalityModalOpen && !selectedDetailServiceId && (
+        <a
+          href="https://wa.me/918284018909"
+          target="_blank"
+          rel="noopener noreferrer"
+          aria-label="Direct WhatsApp Help"
+          title="Chat on WhatsApp"
+          style={{ bottom: 'calc(68px + env(safe-area-inset-bottom, 0px))' }}
+          className="md:hidden fixed right-3 z-30 w-11 h-11 rounded-full bg-[#25D366] hover:bg-emerald-600 text-white shadow-lg shadow-emerald-900/20 flex items-center justify-center transition-transform active:scale-95 border-2 border-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0D3B2E]"
+        >
+          <MessageCircle className="w-5 h-5 fill-white/20 stroke-[2.2]" />
+        </a>
+      )}
 
-      {/* 2. Direct Click-to-WhatsApp */}
-      <a
-        href="https://wa.me/918284018909"
-        target="_blank"
-        rel="noopener noreferrer"
-        className="flex-1 flex items-center justify-center space-x-1.5 py-2.5 px-2 rounded-xl border border-emerald-200 bg-emerald-50/80 text-emerald-800 hover:bg-emerald-100 active:scale-[0.98] transition-all text-xs font-semibold focus-visible:ring-2 focus-visible:ring-emerald-600 focus-visible:outline-none min-h-[44px]"
-        aria-label="Chat with UrbanCare on WhatsApp"
+      {/* Fixed Bottom Navigation Bar: Home, Services, Bookings, Account */}
+      <nav
+        aria-label="Main Mobile Navigation"
+        className="md:hidden fixed bottom-0 left-0 right-0 z-40 bg-white/95 backdrop-blur-md border-t border-[#E2E6E4] shadow-[0_-4px_20px_rgba(0,0,0,0.06)] px-2 py-1 safe-bottom"
       >
-        <MessageCircle className="w-4 h-4 text-emerald-600 shrink-0" />
-        <span>WhatsApp</span>
-      </a>
+        <div className="grid grid-cols-4 items-center max-w-md mx-auto">
+          {/* 1. Home */}
+          <button
+            type="button"
+            id="mobile-nav-home"
+            onClick={() => handleNav('home')}
+            aria-label="Home"
+            aria-current={isHomeActive ? 'page' : undefined}
+            className={`flex flex-col items-center justify-center py-2 px-1 rounded-xl transition-all min-h-[50px] relative ${
+              isHomeActive
+                ? 'text-[#0D3B2E] font-bold'
+                : 'text-[#626B73] hover:text-[#0D3B2E] font-medium'
+            }`}
+          >
+            {isHomeActive && (
+              <span className="absolute top-0.5 w-8 h-1 bg-[#0D3B2E] rounded-full" />
+            )}
+            <Home
+              className={`w-5 h-5 transition-transform ${
+                isHomeActive ? 'stroke-[2.5] scale-105 text-[#0D3B2E]' : 'stroke-[1.8]'
+              }`}
+            />
+            <span className="text-[11px] mt-1 leading-none tracking-tight">Home</span>
+          </button>
 
-      {/* 3. Primary CTA: Book Now */}
-      <button
-        onClick={handleBookNow}
-        className="flex-[1.3] flex items-center justify-center space-x-1.5 py-2.5 px-3 rounded-xl bg-[#F28C28] hover:bg-[#d9771e] active:scale-[0.98] text-white font-bold text-xs shadow-sm transition-all focus-visible:ring-2 focus-visible:ring-[#0F3D2E] focus-visible:outline-none min-h-[44px]"
-        aria-label="Book a Service Now"
-      >
-        <span>Book Now</span>
-        <ArrowRight className="w-3.5 h-3.5 shrink-0" />
-      </button>
-    </aside>
+          {/* 2. Services */}
+          <button
+            type="button"
+            id="mobile-nav-services"
+            onClick={() => handleNav('services')}
+            aria-label="Services Catalogue"
+            aria-current={isServicesActive ? 'page' : undefined}
+            className={`flex flex-col items-center justify-center py-2 px-1 rounded-xl transition-all min-h-[50px] relative ${
+              isServicesActive
+                ? 'text-[#0D3B2E] font-bold'
+                : 'text-[#626B73] hover:text-[#0D3B2E] font-medium'
+            }`}
+          >
+            {isServicesActive && (
+              <span className="absolute top-0.5 w-8 h-1 bg-[#0D3B2E] rounded-full" />
+            )}
+            <Layers
+              className={`w-5 h-5 transition-transform ${
+                isServicesActive ? 'stroke-[2.5] scale-105 text-[#0D3B2E]' : 'stroke-[1.8]'
+              }`}
+            />
+            <span className="text-[11px] mt-1 leading-none tracking-tight">Services</span>
+          </button>
+
+          {/* 3. Bookings */}
+          <button
+            type="button"
+            id="mobile-nav-bookings"
+            onClick={() => handleNav('bookings')}
+            aria-label={`My Bookings${activeBookingsCount > 0 ? ` (${activeBookingsCount} active)` : ''}`}
+            aria-current={isBookingsActive ? 'page' : undefined}
+            className={`flex flex-col items-center justify-center py-2 px-1 rounded-xl transition-all min-h-[50px] relative ${
+              isBookingsActive && !isHomeActive && !isServicesActive
+                ? 'text-[#0D3B2E] font-bold'
+                : 'text-[#626B73] hover:text-[#0D3B2E] font-medium'
+            }`}
+          >
+            {isBookingsActive && !isHomeActive && !isServicesActive && (
+              <span className="absolute top-0.5 w-8 h-1 bg-[#0D3B2E] rounded-full" />
+            )}
+            <div className="relative">
+              <CalendarCheck
+                className={`w-5 h-5 transition-transform ${
+                  isBookingsActive && !isHomeActive && !isServicesActive
+                    ? 'stroke-[2.5] scale-105 text-[#0D3B2E]'
+                    : 'stroke-[1.8]'
+                }`}
+              />
+              {activeBookingsCount > 0 && (
+                <span className="absolute -top-1 -right-2.5 w-4 h-4 rounded-full bg-[#F79324] text-[#0D3B2E] text-[9px] font-extrabold flex items-center justify-center shadow-xs animate-pulse">
+                  {activeBookingsCount}
+                </span>
+              )}
+            </div>
+            <span className="text-[11px] mt-1 leading-none tracking-tight">Bookings</span>
+          </button>
+
+          {/* 4. Account */}
+          <button
+            type="button"
+            id="mobile-nav-account"
+            onClick={() => handleNav('account')}
+            aria-label="Account Profile"
+            aria-current={isAccountActive ? 'page' : undefined}
+            className={`flex flex-col items-center justify-center py-2 px-1 rounded-xl transition-all min-h-[50px] relative ${
+              isAccountActive && !isHomeActive && !isServicesActive
+                ? 'text-[#0D3B2E] font-bold'
+                : 'text-[#626B73] hover:text-[#0D3B2E] font-medium'
+            }`}
+          >
+            <User
+              className={`w-5 h-5 transition-transform ${
+                isAccountActive && !isHomeActive && !isServicesActive
+                  ? 'stroke-[2.5] scale-105 text-[#0D3B2E]'
+                  : 'stroke-[1.8]'
+              }`}
+            />
+            <span className="text-[11px] mt-1 leading-none tracking-tight">
+              {currentUser ? 'Profile' : 'Account'}
+            </span>
+          </button>
+        </div>
+      </nav>
+    </>
   );
 };
