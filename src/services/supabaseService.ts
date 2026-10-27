@@ -12,10 +12,12 @@ import {
   HomeProjectRequest,
   CustomerReview,
   ServiceItem,
+  ServicePackage,
   PriceType,
   VendorOnboardingPayment
 } from '../types';
 import { LOCALITIES } from '../data/initialData';
+import { normalizeServiceItem } from '../utils/pricingEngine';
 
 export interface ServiceCategory {
   id: string;
@@ -254,40 +256,133 @@ export const mapServiceRequestToDb = (req: ServiceRequest) => {
 export const mapServiceItemFromDb = (row: any, categories?: ServiceCategory[]): ServiceItem => {
   const cat = categories?.find((c) => c.id === row.category_id)?.name || row.category_id || 'General';
   const price = Number(row.price) || 0;
-  const originalPrice = Number(row.market_average) || price;
-  const features = Array.isArray(row.features) ? row.features : [];
-  const duration = row.duration_minutes ? `${row.duration_minutes} Mins` : '60 Mins';
+  const originalPrice = row.market_average !== null && row.market_average !== undefined ? Number(row.market_average) : price;
+  const features = Array.isArray(row.features) ? row.features : (Array.isArray(row.included) ? row.included : []);
+  const duration = row.estimated_duration || (row.duration_minutes ? `${row.duration_minutes} Mins` : '60 Mins');
+  const visitFee = row.visit_fee !== null && row.visit_fee !== undefined ? Number(row.visit_fee) : 99;
+
+  const rawType = String(row.price_type || 'fixed').toUpperCase();
+  let price_type: PriceType = 'FIXED';
+  if (rawType === 'STARTING_FROM') price_type = 'STARTING_FROM';
+  else if (rawType === 'PACKAGE') price_type = 'PACKAGE';
+  else if (rawType === 'INSPECTION' || rawType === 'INSPECTION_FEE') price_type = 'INSPECTION';
+  else if (rawType === 'QUOTE_REQUIRED') price_type = 'QUOTE_REQUIRED';
+
+  const discount = row.discount || (originalPrice > price ? `Save ₹${originalPrice - price}` : undefined);
+  const materialPolicy = row.material_policy || 'Transparent billing: Standard spares billed at MRP with pre-approval.';
+  const warranty = row.warranty || '30-Day Workmanship Guarantee';
+
+  return normalizeServiceItem({
+    id: row.id,
+    name: row.name,
+    category: cat,
+    subcategory: row.subcategory || 'General',
+    description: row.description || '',
+    price_type,
+    base_price: price,
+    original_price: originalPrice,
+    discount,
+    visit_fee: visitFee,
+    tax: 0,
+    material_policy: materialPolicy,
+    duration,
+    warranty,
+    included_items: features,
+    excluded_items: [],
+    active: row.active !== false,
+    effective_from: '2026-01-01',
+    badge: row.badge || undefined,
+    sortOrder: Number(row.display_order) || 1,
+    rating: Number(row.rating) || 4.8,
+    serviceAreas: LOCALITIES
+  });
+};
+
+export const mapServiceItemToDb = (service: ServiceItem, categories?: ServiceCategory[]) => {
+  let category_id = service.category;
+  if (categories && categories.length > 0) {
+    const matched = categories.find((c) => c.name.toLowerCase() === service.category.toLowerCase() || c.id === service.category);
+    if (matched) category_id = matched.id;
+  }
+  const basePrice = service.base_price ?? service.basePrice ?? 0;
+  const originalPrice = service.original_price ?? service.originalPrice ?? basePrice;
+  const visitFee = service.visit_fee ?? service.visitFee ?? 99;
+  const priceType = (service.price_type || service.pricingType || 'fixed').toString().toLowerCase();
+
+  return {
+    id: service.id,
+    category_id,
+    name: service.name,
+    subcategory: service.subcategory || 'General',
+    price: basePrice,
+    market_average: originalPrice,
+    price_type: priceType,
+    visit_fee: visitFee,
+    discount: service.discount || null,
+    estimated_duration: service.duration || service.estimatedDuration || '60 mins',
+    warranty: service.warranty || '30-Day Guarantee',
+    material_policy: service.material_policy || service.materialPolicy || null,
+    badge: service.badge || null,
+    rating: service.rating || 4.8,
+    description: service.description || '',
+    features: service.included_items || service.included || [],
+    display_order: service.sortOrder || 1,
+    active: service.active !== false
+  };
+};
+
+export const mapServicePackageFromDb = (row: any): ServicePackage => {
+  const price = Number(row.price) || 0;
+  const originalPrice = Number(row.original_price) || price;
+  const savings = row.savings || (originalPrice > price ? `Save ₹${originalPrice - price}` : 'Special Offer');
+  const included = Array.isArray(row.included) ? row.included : [];
+  const serviceAreas = Array.isArray(row.service_areas) ? row.service_areas : LOCALITIES;
 
   return {
     id: row.id,
     name: row.name,
-    category: cat,
-    subcategory: row.subcategory || 'General Repairs',
+    category: row.category,
+    category_id: row.category_id || undefined,
+    subcategory: row.subcategory || undefined,
     description: row.description || '',
-    price_type: 'FIXED' as PriceType,
-    base_price: price,
-    original_price: originalPrice,
-    discount: originalPrice > price ? `Save ₹${originalPrice - price}` : undefined,
-    visit_fee: 99,
-    tax: 0,
-    material_policy: 'Transparent billing: Standard spares billed at MRP with pre-approval.',
-    duration,
-    warranty: '30-Day UrbanCare Guarantee',
-    included_items: features,
-    excluded_items: [],
-    active: true,
-    effective_from: '2026-01-01',
-    basePrice: price,
+    price,
     originalPrice,
-    visitFee: 99,
-    pricingType: 'fixed',
-    materialPolicy: 'Transparent billing: Standard spares billed at MRP with pre-approval.',
-    estimatedDuration: duration,
-    included: features,
-    excluded: [],
-    serviceAreas: LOCALITIES,
-    sortOrder: Number(row.display_order) || 1,
-    rating: Number(row.rating) || 4.8
+    savings,
+    duration: row.duration || '2 - 3 Hours',
+    included,
+    serviceAreas,
+    active: row.active !== false,
+    pricingType: 'package',
+    rating: Number(row.rating) || 4.9
+  };
+};
+
+export const mapServicePackageToDb = (pkg: ServicePackage, categories?: ServiceCategory[]) => {
+  let category_id = 'ac-appliances';
+  if (categories && categories.length > 0) {
+    const matched = categories.find((c) => c.name.toLowerCase() === pkg.category.toLowerCase() || c.id === pkg.category);
+    if (matched) category_id = matched.id;
+  } else if (pkg.category.toLowerCase().includes('clean')) {
+    category_id = 'cleaning';
+  } else if (pkg.category.toLowerCase().includes('elec')) {
+    category_id = 'electrical';
+  }
+
+  return {
+    id: pkg.id,
+    name: pkg.name,
+    category_id,
+    category: pkg.category,
+    subcategory: pkg.subcategory || null,
+    description: pkg.description || '',
+    price: pkg.price,
+    original_price: pkg.originalPrice,
+    savings: pkg.savings,
+    duration: pkg.duration,
+    included: pkg.included || [],
+    service_areas: pkg.serviceAreas || LOCALITIES,
+    rating: pkg.rating || 4.9,
+    active: pkg.active !== false
   };
 };
 
@@ -357,19 +452,21 @@ export const mapPaymentFromDb = (row: any): PaymentRecord => {
 // ==============================================================================
 
 /**
- * Loads public service catalog (services & categories) from Supabase.
+ * Loads public service catalog (services, categories & packages) from Supabase.
  * Publicly accessible via RLS policies.
  */
 export const loadCatalogFromSupabase = async (): Promise<{
   services: ServiceItem[];
   categories: ServiceCategory[];
+  packages: ServicePackage[];
 } | null> => {
   if (!isSupabaseConfigured()) return null;
 
   try {
-    const [categoriesRes, servicesRes] = await Promise.all([
+    const [categoriesRes, servicesRes, packagesRes] = await Promise.all([
       supabase.from('service_categories').select('*').order('display_order'),
-      supabase.from('services').select('*').order('name')
+      supabase.from('services').select('*').order('display_order', { ascending: true }),
+      supabase.from('service_packages').select('*').order('display_order', { ascending: true })
     ]);
 
     if (servicesRes.error) {
@@ -381,8 +478,9 @@ export const loadCatalogFromSupabase = async (): Promise<{
     const services: ServiceItem[] = (servicesRes.data || []).map((row: any) =>
       mapServiceItemFromDb(row, categories)
     );
+    const packages: ServicePackage[] = (packagesRes.data || []).map(mapServicePackageFromDb);
 
-    return { services, categories };
+    return { services, categories, packages };
   } catch (error) {
     console.error('Failed to load catalog from Supabase:', error);
     throw error;
@@ -400,6 +498,7 @@ export interface RoleDataResult {
   opsSettings?: OpsSettings | null;
   services?: ServiceItem[] | null;
   categories?: ServiceCategory[] | null;
+  packages?: ServicePackage[] | null;
 }
 
 /**
@@ -491,6 +590,7 @@ export const loadAllDataFromSupabase = async () => {
       requestsRes,
       servicesRes,
       categoriesRes,
+      packagesRes,
       ledgerRes,
       complaintsRes,
       paymentsRes,
@@ -500,8 +600,9 @@ export const loadAllDataFromSupabase = async () => {
       supabase.from('employees').select('*').order('name'),
       supabase.from('vendors').select('*').order('business_name'),
       supabase.from('service_requests').select('*').order('created_at', { ascending: false }),
-      supabase.from('services').select('*').order('name'),
+      supabase.from('services').select('*').order('display_order', { ascending: true }),
       supabase.from('service_categories').select('*').order('display_order'),
+      supabase.from('service_packages').select('*').order('display_order', { ascending: true }),
       supabase.from('opportunity_ledger').select('*').order('created_at', { ascending: false }),
       supabase.from('complaints').select('*').order('created_at', { ascending: false }),
       supabase.from('payments').select('*').order('created_at', { ascending: false }),
@@ -526,6 +627,9 @@ export const loadAllDataFromSupabase = async () => {
     const mappedServices: ServiceItem[] | null = servicesRes.data && servicesRes.data.length > 0
       ? servicesRes.data.map((row: any) => mapServiceItemFromDb(row, categories))
       : null;
+    const mappedPackages: ServicePackage[] | null = packagesRes.data && packagesRes.data.length > 0
+      ? packagesRes.data.map(mapServicePackageFromDb)
+      : null;
 
     return {
       customers: customersRes.data && customersRes.data.length > 0 ? customersRes.data.map(mapCustomerFromDb) : null,
@@ -534,6 +638,7 @@ export const loadAllDataFromSupabase = async () => {
       requests: requestsRes.data && requestsRes.data.length > 0 ? requestsRes.data.map(mapServiceRequestFromDb) : null,
       services: mappedServices,
       categories: categoriesRes.data || null,
+      packages: mappedPackages,
       ledger: ledgerRes.data && ledgerRes.data.length > 0 ? ledgerRes.data.map((row: any) => ({
         id: row.id,
         vendorId: row.vendor_id,
@@ -1220,5 +1325,89 @@ export const adminReleasePhoneViaRpc = async (
     const msg = err instanceof Error ? err.message : String(err);
     console.error('Failed to release phone via RPC:', err);
     return { success: false, message: msg };
+  }
+};
+
+/**
+ * Persists a service item into Supabase PostgreSQL.
+ */
+export const syncServiceToSupabase = async (
+  service: ServiceItem,
+  categories?: ServiceCategory[]
+): Promise<boolean> => {
+  if (!isSupabaseConfigured()) return false;
+  try {
+    const dbPayload = mapServiceItemToDb(service, categories);
+    const { error } = await supabase
+      .from('services')
+      .upsert(dbPayload, { onConflict: 'id' });
+    if (error) {
+      console.error('Supabase service upsert error:', error);
+      return false;
+    }
+    return true;
+  } catch (err) {
+    console.error('Failed to sync service to Supabase:', err);
+    return false;
+  }
+};
+
+/**
+ * Deletes a service item from Supabase PostgreSQL.
+ */
+export const deleteServiceFromSupabase = async (id: string): Promise<boolean> => {
+  if (!isSupabaseConfigured()) return false;
+  try {
+    const { error } = await supabase.from('services').delete().eq('id', id);
+    if (error) {
+      console.error('Supabase service delete error:', error);
+      return false;
+    }
+    return true;
+  } catch (err) {
+    console.error('Failed to delete service from Supabase:', err);
+    return false;
+  }
+};
+
+/**
+ * Persists a service package into Supabase PostgreSQL.
+ */
+export const syncServicePackageToSupabase = async (
+  pkg: ServicePackage,
+  categories?: ServiceCategory[]
+): Promise<boolean> => {
+  if (!isSupabaseConfigured()) return false;
+  try {
+    const dbPayload = mapServicePackageToDb(pkg, categories);
+    const { error } = await supabase
+      .from('service_packages')
+      .upsert(dbPayload, { onConflict: 'id' });
+    if (error) {
+      console.error('Supabase package upsert error:', error);
+      return false;
+    }
+    return true;
+  } catch (err) {
+    console.error('Failed to sync package to Supabase:', err);
+    return false;
+  }
+};
+
+/**
+ * Deletes a service package from Supabase PostgreSQL.
+ */
+export const deleteServicePackageFromSupabase = async (id: string): Promise<boolean> => {
+  if (!isSupabaseConfigured()) return false;
+  try {
+    const { error } = await supabase.from('service_packages').delete().eq('id', id);
+    if (error) {
+      console.error('Supabase package delete error:', error);
+      return false;
+    }
+    return true;
+  } catch (err) {
+    console.error('Failed to delete package from Supabase:', err);
+    return false;
   }
 };

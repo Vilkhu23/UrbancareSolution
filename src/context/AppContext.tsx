@@ -301,6 +301,7 @@ interface AppContextType {
   setCurrentUser: (user: CustomerRecord | null) => void;
   login: (emailOrPhone: string, password: string, returnTo?: string) => Promise<{ success: boolean; role?: UserRole; mustChangePassword?: boolean; message?: string }>;
   logout: () => Promise<void>;
+  loginWithGoogle: (returnTo?: string) => Promise<void>;
   loginCustomer: (phoneOrEmail: string, otpOrPassword?: string) => Promise<boolean> | boolean;
   registerCustomer: (details: {
     name: string;
@@ -1214,7 +1215,102 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   useEffect(() => {
     let isMounted = true;
 
+    // Helper to securely process a Supabase session, verify role constraints, and route users
+    const handleSessionResolution = async (
+      session: any,
+      mounted: boolean,
+      isInitialMount: boolean = false
+    ) => {
+      if (!session?.user || !mounted) return;
+
+      hasActiveSessionRef.current = true;
+      const isGoogleUser =
+        session.user.app_metadata?.provider === 'google' ||
+        session.user.identities?.some((id: any) => id.provider === 'google');
+
+      let { data: profile, error: profileError } = await supabase
+        .from('profiles')
+        .select('*')
+        .eq('id', session.user.id)
+        .maybeSingle();
+
+      // First-time Google OAuth trigger race mitigation: retry once after 350ms if profile not found
+      if (!profile && isGoogleUser) {
+        await new Promise((r) => setTimeout(r, 350));
+        const retryRes = await supabase
+          .from('profiles')
+          .select('*')
+          .eq('id', session.user.id)
+          .maybeSingle();
+        profile = retryRes.data;
+        profileError = retryRes.error;
+      }
+
+      if (profileError) {
+        console.error('Failed to load user profile during session resolution:', profileError);
+      }
+
+      if (profile && mounted) {
+        // SECURITY GUARD: Google OAuth is strictly restricted to customer/resident accounts.
+        // If an existing operational staff or administrator signs in with Google, reject and terminate.
+        if (isGoogleUser && profile.role !== 'customer') {
+          console.warn('Google login is strictly restricted to customer/resident accounts. Terminating session.');
+          await supabase.auth.signOut();
+          clearSessionData();
+          showToast('Google sign-in is restricted to customer accounts. Staff and administrators must use password authentication.', 'error');
+          setIsAuthModalOpen(true);
+          return;
+        }
+
+        await syncProfileToState(profile, session.user.email || '');
+
+        // Check if user was returning from a Google OAuth redirect
+        if (typeof window !== 'undefined') {
+          const savedReturnTo = sessionStorage.getItem('urbancare_auth_return_to');
+          if (savedReturnTo) {
+            sessionStorage.removeItem('urbancare_auth_return_to');
+            const SAFE_CUSTOMER_PAGES = new Set([
+              'home', 'services', 'projects', 'how-it-works', 'become-partner', 'about', 'contact', 'account'
+            ]);
+            if (SAFE_CUSTOMER_PAGES.has(savedReturnTo)) {
+              setCurrentPage(savedReturnTo);
+            } else {
+              setCurrentPage('account');
+            }
+          }
+
+          // Clean OAuth hash from address bar (e.g., #access_token=... or #error=...)
+          if (window.location.hash.includes('access_token') || window.location.hash.includes('id_token') || window.location.hash.includes('error')) {
+            window.history.replaceState(null, '', window.location.pathname + window.location.search);
+          }
+        }
+      }
+    };
+
     const syncSession = async () => {
+      // 1. Detect and handle OAuth error hash / query params (e.g. user cancelled Google prompt)
+      if (typeof window !== 'undefined') {
+        const hash = window.location.hash ? window.location.hash.substring(1) : '';
+        const search = window.location.search ? window.location.search.substring(1) : '';
+        const hashParams = new URLSearchParams(hash);
+        const searchParams = new URLSearchParams(search);
+
+        const error = hashParams.get('error') || searchParams.get('error');
+        const errorCode = hashParams.get('error_code') || searchParams.get('error_code');
+        const errorDesc = hashParams.get('error_description') || searchParams.get('error_description');
+
+        if (error || errorCode) {
+          sessionStorage.removeItem('urbancare_auth_return_to');
+          if (error === 'access_denied' || errorCode === '403' || errorDesc?.toLowerCase().includes('denied')) {
+            showToast('Google sign-in was cancelled.', 'info');
+          } else {
+            const cleanDesc = errorDesc ? decodeURIComponent(errorDesc.replace(/\+/g, ' ')) : error || 'Authentication error';
+            showToast(`Google sign-in failed: ${cleanDesc}`, 'error');
+          }
+          window.history.replaceState(null, '', window.location.pathname);
+        }
+      }
+
       if (!isSupabaseConfigured()) {
         if (isMounted) setIsAuthLoading(false);
         return;
@@ -1226,21 +1322,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           console.warn('Session retrieval error:', sessionError);
         }
 
-        if (session?.user && isMounted) {
-          hasActiveSessionRef.current = true;
-          const { data: profile, error: profileError } = await supabase
-            .from('profiles')
-            .select('*')
-            .eq('id', session.user.id)
-            .maybeSingle();
-
-          if (profileError) {
-            console.error('Failed to load user profile on startup:', profileError);
-          }
-
-          if (profile && isMounted) {
-            await syncProfileToState(profile, session.user.email || '');
-          }
+        if (session && isMounted) {
+          await handleSessionResolution(session, isMounted, true);
         }
       } catch (err) {
         console.warn('Supabase auth session sync notice:', err);
@@ -1277,20 +1360,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           }
           hasActiveSessionRef.current = false;
         } else if (session?.user && (event === 'SIGNED_IN' || event === 'TOKEN_REFRESHED' || event === 'USER_UPDATED')) {
-          hasActiveSessionRef.current = true;
-          try {
-            const { data: profile } = await supabase
-              .from('profiles')
-              .select('*')
-              .eq('id', session.user.id)
-              .maybeSingle();
-
-            if (profile && isMounted) {
-              await syncProfileToState(profile, session.user.email || '');
-            }
-          } catch (err) {
-            console.warn('Supabase auth state change error:', err);
-          }
+          await handleSessionResolution(session, isMounted, false);
         }
       });
 
@@ -1534,6 +1604,41 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
     handleFailedLogin('Incorrect email or password.');
     return { success: false, message: 'Incorrect email or password.' };
+  };
+
+  const loginWithGoogle = async (returnTo?: string): Promise<void> => {
+    if (!isSupabaseConfigured()) {
+      showToast('Supabase credentials not configured in .env file (Running in offline/local mock mode).', 'warning');
+      return;
+    }
+
+    try {
+      const targetDestination = returnTo || authReturnTo || (currentPage === 'account' ? 'account' : 'home');
+      if (typeof window !== 'undefined') {
+        sessionStorage.setItem('urbancare_auth_return_to', targetDestination);
+      }
+
+      const redirectTo = typeof window !== 'undefined' ? window.location.origin : undefined;
+      const { error } = await supabase.auth.signInWithOAuth({
+        provider: 'google',
+        options: {
+          redirectTo,
+          queryParams: {
+            access_type: 'offline',
+            prompt: 'select_account'
+          }
+        }
+      });
+
+      if (error) {
+        console.error('Google OAuth initialization error:', error);
+        showToast(error.message || 'Failed to initiate Google sign-in.', 'error');
+      }
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : 'Google sign-in could not be started.';
+      console.error('Google OAuth exception:', err);
+      showToast(msg, 'error');
+    }
   };
 
   const loginCustomer = async (phoneOrEmail: string, otpOrPassword?: string): Promise<boolean> => {
@@ -2089,12 +2194,6 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   };
 
   const addPackageToCart = (pkg: ServicePackage) => {
-    if (!currentUser) {
-      setIsAuthModalOpen(true);
-      showToast('Please sign in or register to add packages to your basket.', 'info');
-      return;
-    }
-
     setCart((prev) => {
       const existing = prev.find((item) => item.serviceId === pkg.id);
       if (existing) {
@@ -3849,6 +3948,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         setCurrentUser,
         login,
         logout,
+        loginWithGoogle,
         loginCustomer,
         registerCustomer,
         logoutCustomer,

@@ -63,23 +63,23 @@ export const OrderTrackerModal: React.FC = () => {
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-xs animate-fadeIn">
-      <div className="bg-white rounded-2xl max-w-lg w-full max-h-[90vh] flex flex-col shadow-2xl border border-[#c0c9c2]/50 overflow-hidden">
+      <div className="bg-white rounded-2xl max-w-lg w-full max-h-[90vh] flex flex-col shadow-2xl border border-[#E2E6E4] overflow-hidden">
         {/* Header */}
-        <div className="p-4 border-b border-[#c0c9c2]/40 bg-[#003523] text-white flex items-center justify-between">
+        <div className="p-4 border-b border-[#E2E6E4] bg-[#0D3B2E] text-white flex items-center justify-between">
           <div>
             <div className="flex items-center space-x-2">
               <span className="font-extrabold text-base tracking-tight">Order Lifecycle Tracker</span>
-              <span className="bg-[#fe932c] text-[#002114] text-xs font-mono font-bold px-2 py-0.5 rounded-full">
+              <span className="bg-[#F79324] text-[#0D3B2E] text-xs font-mono font-bold px-2 py-0.5 rounded-full">
                 #{order.id}
               </span>
             </div>
-            <p className="text-xs text-[#b6efd1] mt-0.5">
+            <p className="text-xs text-[#E7F3EC] mt-0.5">
               {order.locality} · Slot: {order.preferredTimeSlot}
             </p>
           </div>
           <button
             onClick={() => setActiveTrackingRequestId(null)}
-            className="p-1 rounded-lg text-gray-300 hover:text-white"
+            className="p-1 rounded-lg text-gray-300 hover:text-white cursor-pointer"
           >
             <X className="w-5 h-5" />
           </button>
@@ -88,16 +88,16 @@ export const OrderTrackerModal: React.FC = () => {
         {/* Body */}
         <div className="flex-1 overflow-y-auto p-5 space-y-5">
           {/* Active Status Badge Banner */}
-          <div className="p-3.5 rounded-xl bg-[#faf8ff] border border-[#c0c9c2]/50 flex items-center justify-between">
+          <div className="p-3.5 rounded-xl bg-[#F7F8F7] border border-[#E2E6E4] flex items-center justify-between">
             <div>
-              <span className="text-[10px] text-[#707973] uppercase font-bold tracking-wider block">
+              <span className="text-[10px] text-[#626B73] uppercase font-bold tracking-wider block">
                 Current Operational State
               </span>
-              <span className="text-sm font-extrabold text-[#003523]">{order.status}</span>
+              <span className="text-sm font-extrabold text-[#0D3B2E]">{order.status}</span>
             </div>
             <div className="text-right">
-              <span className="text-[10px] text-[#707973] block">Total Amount</span>
-              <span className="text-sm font-bold text-[#131b2e]">
+              <span className="text-[10px] text-[#626B73] block">Total Amount</span>
+              <span className="text-sm font-bold text-[#202124]">
                 {order.hasQuoteRequired ? `₹${order.total} (Quote Basis)` : `₹${order.total}`}
               </span>
             </div>
@@ -105,35 +105,35 @@ export const OrderTrackerModal: React.FC = () => {
 
           {/* Assigned Technician Card (if assigned) */}
           {order.assignedTo ? (
-            <div className="p-3.5 rounded-xl bg-[#c0edd3]/30 border border-[#b6efd1] space-y-2">
+            <div className="p-3.5 rounded-xl bg-[#E7F3EC] border border-[#0D3B2E]/20 space-y-2">
               <div className="flex items-center justify-between">
-                <div className="flex items-center space-x-1.5 text-xs font-bold text-[#003523]">
-                  <UserCheck className="w-4 h-4 text-[#003523]" />
+                <div className="flex items-center space-x-1.5 text-xs font-bold text-[#0D3B2E]">
+                  <UserCheck className="w-4 h-4 text-[#0D3B2E]" />
                   <span>Assigned Verified Artisan</span>
                 </div>
-                <span className="text-[10px] font-bold text-[#002114] bg-[#fe932c] px-2 py-0.5 rounded-full">
+                <span className="text-[10px] font-bold text-[#0D3B2E] bg-[#F79324] px-2 py-0.5 rounded-full">
                   {order.assignedTo.type === 'EMPLOYEE' ? 'Direct Staff' : 'Verified Partner'}
                 </span>
               </div>
 
               <div className="flex items-center justify-between pt-1">
                 <div>
-                  <div className="text-sm font-bold text-[#131b2e]">{order.assignedTo.name}</div>
-                  <div className="text-xs text-[#404943]">
+                  <div className="text-sm font-bold text-[#202124]">{order.assignedTo.name}</div>
+                  <div className="text-xs text-[#626B73]">
                     {order.assignedTo.rating} · Hub: {order.assignedTo.hub}
                   </div>
                 </div>
                 <div className="flex items-center space-x-2">
                   <a
                     href={`tel:${order.assignedTo.phone}`}
-                    className="px-3 py-1.5 rounded-lg bg-[#003523] text-white text-xs font-bold flex items-center space-x-1.5 hover:bg-[#144d37]"
+                    className="px-3 py-1.5 rounded-lg bg-[#0D3B2E] text-white text-xs font-bold flex items-center space-x-1.5 hover:bg-[#0A2E24]"
                   >
                     <Phone className="w-3.5 h-3.5" />
                     <span>Call Artisan</span>
                   </a>
                   <a
                     href="tel:+918284018909"
-                    className="px-2.5 py-1.5 rounded-lg border border-[#c0c9c2] text-[#131b2e] text-xs font-semibold hover:bg-white"
+                    className="px-2.5 py-1.5 rounded-lg border border-[#E2E6E4] text-[#202124] text-xs font-semibold hover:bg-white"
                     title="Call Kharar Operations Desk"
                   >
                     Ops Desk
@@ -142,16 +142,16 @@ export const OrderTrackerModal: React.FC = () => {
               </div>
             </div>
           ) : (
-            <div className="p-3.5 rounded-xl bg-[#f2f3ff] border border-[#c0c9c2]/50 text-xs text-[#404943] flex items-center justify-between gap-2">
+            <div className="p-3.5 rounded-xl bg-[#F7F8F7] border border-[#E2E6E4] text-xs text-[#626B73] flex items-center justify-between gap-2">
               <div className="flex items-center space-x-2">
-                <ShieldAlert className="w-4 h-4 text-[#904d00] shrink-0" />
+                <ShieldAlert className="w-4 h-4 text-[#F79324] shrink-0" />
                 <span>
                   <strong>Operations Review in Progress:</strong> Our Kharar dispatcher is assigning the best artisan for your slot.
                 </span>
               </div>
               <a
                 href="tel:+918284018909"
-                className="shrink-0 text-xs font-bold text-[#003523] underline"
+                className="shrink-0 text-xs font-bold text-[#0D3B2E] underline"
               >
                 Help Desk
               </a>
@@ -186,22 +186,22 @@ export const OrderTrackerModal: React.FC = () => {
                     <div
                       className={`w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold shrink-0 mt-0.5 ${
                         isPassed
-                          ? 'bg-[#003523] text-white'
-                          : 'bg-[#eaedff] text-[#404943]'
+                          ? 'bg-[#0D3B2E] text-white'
+                          : 'bg-[#E7F3EC] text-[#626B73]'
                       }`}
                     >
                       {idx + 1}
                     </div>
                     <div className="flex-1">
                       <div className="flex items-center space-x-2">
-                        <span className={`text-xs font-bold ${isCurrent ? 'text-[#003523]' : 'text-[#131b2e]'}`}>
+                        <span className={`text-xs font-bold ${isCurrent ? 'text-[#0D3B2E]' : 'text-[#202124]'}`}>
                           {step.label}
                         </span>
                         {isCurrent && (
-                          <span className="w-2 h-2 rounded-full bg-[#fe932c] animate-pulse"></span>
+                          <span className="w-2 h-2 rounded-full bg-[#F79324] animate-pulse"></span>
                         )}
                       </div>
-                      <p className="text-[11px] text-[#707973] mt-0.5">{step.desc}</p>
+                      <p className="text-[11px] text-[#626B73] mt-0.5">{step.desc}</p>
                     </div>
                   </div>
                 );
@@ -210,38 +210,38 @@ export const OrderTrackerModal: React.FC = () => {
           </div>
 
           {/* Requested Items Summary */}
-          <div className="border-t border-[#c0c9c2]/40 pt-3 space-y-1.5 text-xs">
-            <span className="font-bold text-[#131b2e] block">Service Order Items</span>
+          <div className="border-t border-[#E2E6E4] pt-3 space-y-1.5 text-xs">
+            <span className="font-bold text-[#202124] block">Service Order Items</span>
             {order.items.map((item, i) => (
-              <div key={i} className="flex justify-between text-[#404943]">
+              <div key={i} className="flex justify-between text-[#626B73]">
                 <span>
                   {item.serviceName} (×{item.quantity})
                 </span>
                 <span className="font-semibold">
                   {item.price_type === 'QUOTE_REQUIRED' || item.price === 0 ? (
-                    <span className="text-[#003523] font-semibold">Quote on-site</span>
+                    <span className="text-[#0D3B2E] font-semibold">Quote on-site</span>
                   ) : (
                     `₹${item.price * item.quantity}`
                   )}
                 </span>
               </div>
             ))}
-            <div className="flex justify-between text-[#707973] pt-1">
+            <div className="flex justify-between text-[#626B73] pt-1">
               <span>Doorstep Visit / Inspection</span>
-              <span>{order.visitFee === 0 ? <strong className="text-[#003523]">FREE</strong> : `₹${order.visitFee}`}</span>
+              <span>{order.visitFee === 0 ? <strong className="text-[#0D3B2E]">FREE</strong> : `₹${order.visitFee}`}</span>
             </div>
             {order.taxAmount !== undefined && order.taxAmount > 0 && (
-              <div className="flex justify-between text-[#707973]">
+              <div className="flex justify-between text-[#626B73]">
                 <span>Configured Tax (GST)</span>
                 <span>₹{order.taxAmount}</span>
               </div>
             )}
-            <div className="flex justify-between text-[#131b2e] font-bold pt-1.5 border-t border-[#c0c9c2]/30">
+            <div className="flex justify-between text-[#202124] font-bold pt-1.5 border-t border-[#E2E6E4]">
               <span>Total Payable</span>
-              <span className="text-[#003523]">₹{order.total}</span>
+              <span className="text-[#0D3B2E]">₹{order.total}</span>
             </div>
             {order.notes && (
-              <div className="p-2 rounded bg-[#f2f3ff] text-[11px] text-[#404943] mt-2">
+              <div className="p-2 rounded bg-[#F7F8F7] text-[11px] text-[#626B73] mt-2">
                 <strong>Notes:</strong> {order.notes}
               </div>
             )}
@@ -249,18 +249,18 @@ export const OrderTrackerModal: React.FC = () => {
 
           {/* Review Trigger (if completed) */}
           {(order.status === 'COMPLETED' || order.status === 'CUSTOMER CONFIRMED') && (
-            <div className="border-t border-[#c0c9c2]/40 pt-3">
+            <div className="border-t border-[#E2E6E4] pt-3">
               {order.customerRating ? (
-                <div className="p-3 rounded-xl bg-[#c0edd3]/20 border border-[#b6efd1] text-xs">
-                  <div className="font-bold text-[#003523] flex items-center space-x-1">
-                    <Star className="w-3.5 h-3.5 fill-[#fe932c] text-[#fe932c]" />
+                <div className="p-3 rounded-xl bg-[#E7F3EC] border border-[#0D3B2E]/20 text-xs">
+                  <div className="font-bold text-[#0D3B2E] flex items-center space-x-1">
+                    <Star className="w-3.5 h-3.5 fill-[#F79324] text-[#F79324]" />
                     <span>Your Review ({order.customerRating}/5 Stars)</span>
                   </div>
-                  <p className="text-[#404943] mt-1 text-[11px]">"{order.customerFeedback}"</p>
+                  <p className="text-[#626B73] mt-1 text-[11px]">"{order.customerFeedback}"</p>
                 </div>
               ) : showReviewForm ? (
-                <form onSubmit={handleReviewSubmit} className="p-3 rounded-xl bg-[#faf8ff] border border-[#c0c9c2]/50 space-y-3">
-                  <span className="text-xs font-bold text-[#131b2e] block">
+                <form onSubmit={handleReviewSubmit} className="p-3 rounded-xl bg-[#F7F8F7] border border-[#E2E6E4] space-y-3">
+                  <span className="text-xs font-bold text-[#202124] block">
                     Rate Your Assigned Artisan
                   </span>
                   <div className="flex space-x-1">
@@ -269,12 +269,12 @@ export const OrderTrackerModal: React.FC = () => {
                         type="button"
                         key={star}
                         onClick={() => setReviewRating(star)}
-                        className="p-1"
+                        className="p-1 cursor-pointer"
                       >
                         <Star
                           className={`w-5 h-5 ${
                             star <= reviewRating
-                              ? 'text-[#fe932c] fill-[#fe932c]'
+                              ? 'text-[#F79324] fill-[#F79324]'
                               : 'text-gray-300'
                           }`}
                         />
@@ -286,20 +286,20 @@ export const OrderTrackerModal: React.FC = () => {
                     value={reviewText}
                     onChange={(e) => setReviewText(e.target.value)}
                     placeholder="Share your experience (promptness, pricing transparency, cleanliness)"
-                    className="w-full p-2 rounded-lg border border-[#c0c9c2] text-xs"
+                    className="w-full p-2 rounded-lg border border-[#E2E6E4] text-xs font-semibold text-[#202124] focus:border-[#0D3B2E]"
                     required
                   />
                   <div className="flex space-x-2">
                     <button
                       type="button"
                       onClick={() => setShowReviewForm(false)}
-                      className="px-3 py-1.5 rounded-lg border border-[#c0c9c2] text-xs text-[#707973]"
+                      className="px-3 py-1.5 rounded-lg border border-[#E2E6E4] text-xs text-[#626B73] cursor-pointer"
                     >
                       Cancel
                     </button>
                     <button
                       type="submit"
-                      className="px-4 py-1.5 rounded-lg bg-[#003523] text-white text-xs font-bold hover:bg-[#144d37]"
+                      className="px-4 py-1.5 rounded-lg bg-[#0D3B2E] text-white text-xs font-bold hover:bg-[#0A2E24] cursor-pointer"
                     >
                       Submit Review
                     </button>
@@ -308,7 +308,7 @@ export const OrderTrackerModal: React.FC = () => {
               ) : (
                 <button
                   onClick={() => setShowReviewForm(true)}
-                  className="w-full py-2.5 rounded-xl bg-[#fe932c] text-[#002114] font-bold text-xs hover:bg-[#e07f24] transition-all flex items-center justify-center space-x-1.5"
+                  className="w-full py-2.5 rounded-xl bg-[#F79324] hover:bg-[#E2810F] text-[#0D3B2E] font-bold text-xs transition-all flex items-center justify-center space-x-1.5 cursor-pointer shadow-xs active:scale-98"
                 >
                   <Star className="w-4 h-4" />
                   <span>Leave Feedback for Artisan</span>
@@ -319,11 +319,11 @@ export const OrderTrackerModal: React.FC = () => {
         </div>
 
         {/* Footer */}
-        <div className="p-3 bg-[#faf8ff] border-t border-[#c0c9c2]/40 flex justify-between items-center text-xs">
-          <span className="text-[#707973]">Live state synchronized</span>
+        <div className="p-3 bg-[#F7F8F7] border-t border-[#E2E6E4] flex justify-between items-center text-xs">
+          <span className="text-[#626B73]">Live state synchronized</span>
           <button
             onClick={() => setActiveTrackingRequestId(null)}
-            className="px-4 py-1.5 bg-[#003523] text-white rounded-lg font-bold hover:bg-[#144d37]"
+            className="px-4 py-1.5 bg-[#0D3B2E] hover:bg-[#0A2E24] text-white rounded-lg font-bold cursor-pointer"
           >
             Done
           </button>

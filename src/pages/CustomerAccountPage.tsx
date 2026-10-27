@@ -28,7 +28,8 @@ import {
   Trash2,
   Save,
   User,
-  Clock
+  Clock,
+  Search
 } from 'lucide-react';
 
 export const CustomerAccountPage: React.FC = () => {
@@ -70,6 +71,29 @@ export const CustomerAccountPage: React.FC = () => {
   // Help & Support modal state
   const [isHelpModalOpen, setIsHelpModalOpen] = useState(false);
 
+  // Order lookup state for guest / unauthenticated customers
+  const [lookupQuery, setLookupQuery] = useState('');
+  const [lookupError, setLookupError] = useState<string | null>(null);
+
+  const handleLookupSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    setLookupError(null);
+    const cleanQ = lookupQuery.trim().toLowerCase();
+    if (!cleanQ) return;
+    const cleanDigits = cleanQ.replace(/\D/g, '');
+    const match = requests.find((r) => {
+      if (r.id.toLowerCase() === cleanQ || r.id.toLowerCase().replace(/[^a-z0-9]/g, '') === cleanQ.replace(/[^a-z0-9]/g, '')) return true;
+      if (cleanDigits.length >= 4 && r.customerPhone.replace(/\D/g, '').includes(cleanDigits)) return true;
+      return false;
+    });
+    if (match) {
+      setActiveTrackingRequestId(match.id);
+      setLookupQuery('');
+    } else {
+      setLookupError(`No active booking found matching "${lookupQuery.trim()}". Please verify your booking ID (e.g. PB-1001) or mobile number.`);
+    }
+  };
+
   // If user is not logged in (e.g. after logout or back-button navigation),
   // strictly prevent private data exposure and render a clean auth prompt.
   if (!currentUser) {
@@ -79,6 +103,79 @@ export const CustomerAccountPage: React.FC = () => {
           <div className="flex flex-col items-center space-y-3 p-8 bg-white/95 rounded-2xl border border-[#E2E6E4] shadow-sm">
             <div className="w-8 h-8 border-3 border-[#0D3B2E] border-t-transparent rounded-full animate-spin" />
             <span className="text-xs font-semibold text-[#0D3B2E]">Restoring resident profile...</span>
+          </div>
+        </div>
+      );
+    }
+
+    if (accountTab === 'bookings') {
+      return (
+        <div className="max-w-md mx-auto my-8 sm:my-12 px-4 space-y-4 animate-scaleUp">
+          {/* Booking Lookup Card */}
+          <div className="bg-white rounded-3xl border border-[#E2E6E4] p-6 sm:p-7 shadow-sm text-center space-y-4">
+            <div className="w-14 h-14 bg-[#E7F3EC] text-[#0D3B2E] rounded-2xl flex items-center justify-center mx-auto border border-[#0D3B2E]/20">
+              <CalendarCheck className="w-7 h-7 text-[#0D3B2E]" />
+            </div>
+            <div className="space-y-1">
+              <h2 className="text-lg font-bold text-[#202124]">Track Your Doorstep Booking</h2>
+              <p className="text-xs text-[#626B73] leading-relaxed max-w-sm mx-auto">
+                Check live appointment status, assigned technician details, and service OTP using your Booking ID or phone number.
+              </p>
+            </div>
+
+            <form onSubmit={handleLookupSubmit} className="space-y-2.5 text-left pt-1">
+              <div className="relative">
+                <Search className="w-4 h-4 absolute left-3.5 top-1/2 -translate-y-1/2 text-[#626B73]" />
+                <input
+                  type="text"
+                  value={lookupQuery}
+                  onChange={(e) => {
+                    setLookupQuery(e.target.value);
+                    if (lookupError) setLookupError(null);
+                  }}
+                  placeholder="Enter Booking ID (e.g. PB-1001) or mobile"
+                  className="w-full pl-10 pr-4 py-2.5 rounded-xl border border-[#E2E6E4] text-xs font-semibold text-[#202124] placeholder:text-gray-400 focus:border-[#0D3B2E] focus:ring-1 focus:ring-[#0D3B2E]"
+                />
+              </div>
+
+              {lookupError && (
+                <div className="p-2.5 rounded-xl bg-red-50 border border-red-200 text-red-700 text-xs flex items-center space-x-1.5">
+                  <AlertCircle className="w-4 h-4 shrink-0 text-red-600" />
+                  <span>{lookupError}</span>
+                </div>
+              )}
+
+              <button
+                type="submit"
+                className="w-full h-11 py-2.5 rounded-xl bg-[#F79324] hover:bg-[#E2810F] text-[#0D3B2E] text-xs font-bold shadow-xs transition-all flex items-center justify-center space-x-1.5 cursor-pointer"
+              >
+                <span>Track Booking</span>
+                <ChevronRight className="w-4 h-4" />
+              </button>
+            </form>
+          </div>
+
+          {/* Quick Action Navigation */}
+          <div className="bg-[#F7F8F7] rounded-2xl border border-[#E2E6E4] p-4 text-center space-y-3">
+            <p className="text-xs text-[#626B73]">
+              Have an account or want to schedule a new repair?
+            </p>
+            <div className="flex flex-col sm:flex-row items-center justify-center gap-2">
+              <button
+                type="button"
+                onClick={() => setCurrentPage('services')}
+                className="w-full sm:w-auto px-4 py-2 rounded-xl bg-white border border-[#0D3B2E] text-[#0D3B2E] text-xs font-bold hover:bg-[#E7F3EC] transition-colors cursor-pointer"
+              >
+                Browse Services Catalogue
+              </button>
+              <button
+                type="button"
+                onClick={() => openAuthModal('login', 'account')}
+                className="w-full sm:w-auto px-4 py-2 rounded-xl bg-[#0D3B2E] hover:bg-[#0A2E24] text-white text-xs font-bold transition-all cursor-pointer shadow-xs"
+              >
+                Sign In to View All
+              </button>
+            </div>
           </div>
         </div>
       );
@@ -574,8 +671,18 @@ export const CustomerAccountPage: React.FC = () => {
               )}
 
               <p className="text-xs text-[#626B73] break-words">
-                {currentUser.phone} · {currentUser.locality || currentLocality}
+                {currentUser.phone
+                  ? `${currentUser.phone} · `
+                  : currentUser.email
+                  ? `${currentUser.email} · `
+                  : ''}
+                {currentUser.locality || currentLocality}
               </p>
+              {!currentUser.phone && (
+                <p className="text-[11px] text-[#F79324] font-semibold flex items-center space-x-1 pt-0.5">
+                  <span>+ Tap to add mobile number for technician dispatch</span>
+                </p>
+              )}
             </div>
 
             {/* Chevron Right */}

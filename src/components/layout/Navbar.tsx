@@ -50,6 +50,7 @@ export const Navbar: React.FC = () => {
     setIsLocalityModalOpen,
     currentPage,
     setCurrentPage,
+    setAccountTab,
     cartTotal,
     setIsCartDrawerOpen,
     requests,
@@ -205,7 +206,7 @@ export const Navbar: React.FC = () => {
       name: 'AC & Appliances',
       desc: 'AC service, gas refill, RO & fridge repair',
       icon: Wrench,
-      accent: 'bg-emerald-50 text-[#0F3D2E]'
+      accent: 'bg-emerald-50 text-[#0D3B2E]'
     },
     {
       id: 'electrical',
@@ -237,7 +238,7 @@ export const Navbar: React.FC = () => {
     },
     {
       id: 'cleaning',
-      name: 'Home Deep Cleaning',
+      name: 'Home Cleaning',
       desc: 'Kitchen degreasing, bathroom descaling & sofas',
       icon: Sparkles,
       accent: 'bg-purple-50 text-purple-800'
@@ -263,7 +264,7 @@ export const Navbar: React.FC = () => {
       {/* 1. Accessible Skip-to-Content Link */}
       <a
         href="#main-content"
-        className="sr-only focus:not-sr-only focus:fixed focus:top-3 focus:left-4 z-50 bg-[#0F3D2E] text-white px-4 py-2 rounded-lg font-semibold text-xs shadow-xl focus:outline-none focus:ring-2 focus:ring-[#F28C28]"
+        className="sr-only focus:not-sr-only focus:fixed focus:top-3 focus:left-4 z-50 bg-[#0D3B2E] text-white px-4 py-2 rounded-lg font-semibold text-xs shadow-xl focus:outline-none focus:ring-2 focus:ring-[#F79324]"
       >
         Skip to main content
       </a>
@@ -277,48 +278,49 @@ export const Navbar: React.FC = () => {
             : 'h-[72px] shadow-xs border-gray-100'
         }`}
       >
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 h-full flex items-center justify-between gap-3 sm:gap-4 font-['Inter',sans-serif]">
+        <div className="max-w-7xl mx-auto px-2.5 sm:px-6 h-full flex items-center justify-between gap-1.5 sm:gap-4 font-['Inter',sans-serif]">
           {/* LEFT: Logo & Location Pill */}
-          <div className="flex items-center space-x-3 sm:space-x-4 shrink-0">
+          <div className="flex items-center space-x-1.5 sm:space-x-3 shrink-0 min-w-0">
             {/* Brand Logo & Tagline (Single Brand: UrbanCare Solution) */}
             <button
               onClick={() => {
                 setCurrentPage('home');
                 window.scrollTo({ top: 0, behavior: 'smooth' });
               }}
-              className="text-left group flex items-center space-x-2.5 focus-visible:ring-2 focus-visible:ring-[#0F3D2E] focus-visible:outline-none rounded-xl p-1"
+              className="text-left group flex items-center space-x-1.5 sm:space-x-2.5 focus-visible:ring-2 focus-visible:ring-[#0D3B2E] focus-visible:outline-none rounded-xl p-0.5 sm:p-1 shrink-0"
               aria-label="UrbanCare Solution Home"
             >
-              <div className="w-9 h-9 sm:w-10 sm:h-10 rounded-xl bg-[#0F3D2E] text-white flex items-center justify-center font-bold text-lg shadow-sm group-hover:bg-[#144d37] transition-all">
+              <div className="w-8 h-8 sm:w-10 sm:h-10 rounded-xl bg-[#0D3B2E] text-white flex items-center justify-center font-bold text-base sm:text-lg shadow-sm group-hover:bg-[#144d37] transition-all shrink-0">
                 U
               </div>
-              <div className="flex flex-col">
-                <span className="text-base sm:text-lg font-bold text-[#0F3D2E] tracking-tight leading-none">
-                  UrbanCare Solution
+              <div className="hidden min-[400px]:flex flex-col">
+                <span className="text-xs sm:text-base md:text-lg font-bold text-[#0D3B2E] tracking-tight leading-none whitespace-nowrap">
+                  <span className="inline sm:hidden">UrbanCare</span>
+                  <span className="hidden sm:inline">UrbanCare Solution</span>
                 </span>
-                <span className="text-[10px] sm:text-[11px] text-[#5A6A60] font-medium leading-tight mt-0.5">
+                <span className="hidden sm:inline text-[10px] sm:text-[11px] text-[#5A6A60] font-medium leading-tight mt-0.5">
                   Your Space | Our Care
                 </span>
               </div>
             </button>
 
-            {/* Location Pill with Dropdown (Desktop & Tablet) */}
-            <div className="relative" ref={locationRef}>
+            {/* Location Pill with Dropdown (Desktop & Tablet & Mobile) */}
+            <div className="relative shrink-0" ref={locationRef}>
               <button
                 type="button"
                 onClick={() => setIsLocationDropdownOpen(!isLocationDropdownOpen)}
                 aria-expanded={isLocationDropdownOpen}
                 aria-haspopup="listbox"
                 aria-label={`Select location, currently ${shortSectorName}`}
-                className="inline-flex items-center space-x-1.5 px-2.5 sm:px-3 py-1.5 rounded-full bg-gray-50 hover:bg-gray-100 border border-gray-200/80 text-xs font-semibold text-[#0F3D2E] transition-colors focus-visible:ring-2 focus-visible:ring-[#0F3D2E] focus-visible:outline-none cursor-pointer"
+                className="inline-flex items-center space-x-1 sm:space-x-1.5 px-2 sm:px-3 py-1.5 rounded-full bg-gray-50 hover:bg-gray-100 border border-gray-200/80 text-[11px] sm:text-xs font-semibold text-[#0D3B2E] transition-colors focus-visible:ring-2 focus-visible:ring-[#0D3B2E] focus-visible:outline-none cursor-pointer max-w-[95px] min-[360px]:max-w-[115px] sm:max-w-none"
                 title="Select serving sector"
               >
-                <MapPin className="w-3.5 h-3.5 text-[#0F3D2E] shrink-0" />
-                <span className="whitespace-nowrap font-medium text-gray-900">
+                <MapPin className="w-3 h-3 sm:w-3.5 sm:h-3.5 text-[#0D3B2E] shrink-0" />
+                <span className="whitespace-nowrap font-medium text-gray-900 truncate">
                   {shortSectorName}
                 </span>
                 <ChevronDown
-                  className={`w-3.5 h-3.5 text-gray-500 transition-transform duration-150 ${
+                  className={`w-3 h-3 sm:w-3.5 sm:h-3.5 text-gray-500 shrink-0 transition-transform duration-150 ${
                     isLocationDropdownOpen ? 'rotate-180' : ''
                   }`}
                 />
@@ -328,14 +330,14 @@ export const Navbar: React.FC = () => {
               {isLocationDropdownOpen && (
                 <div
                   role="listbox"
-                  className="absolute left-0 top-full mt-2 w-80 sm:w-96 bg-white rounded-2xl shadow-xl border border-gray-100 p-3 z-50 animate-in fade-in slide-in-from-top-1 duration-150"
+                  className="absolute left-0 top-full mt-2 w-80 sm:w-96 max-w-[calc(100vw-20px)] bg-white rounded-2xl shadow-xl border border-gray-100 p-3 z-50 animate-in fade-in slide-in-from-top-1 duration-150"
                 >
                   <div className="px-3 py-2 border-b border-gray-100">
-                    <div className="text-xs font-bold text-[#0F3D2E] uppercase tracking-wider">
+                    <div className="text-xs font-bold text-[#0D3B2E] uppercase tracking-wider">
                       Serving Sectors 94–111, Mohali
                     </div>
                     <div className="text-[11px] text-gray-500 mt-0.5">
-                      JLPL, GMADA, Emaar & TDI corridors • 20–30 min dispatch
+                      JLPL, GMADA, Emaar & TDI corridors • Verified local doorstep service
                     </div>
                   </div>
 
@@ -353,7 +355,7 @@ export const Navbar: React.FC = () => {
                           }}
                           className={`w-full text-left px-3 py-2 rounded-xl text-xs flex items-center justify-between transition-colors ${
                             isSelected
-                              ? 'bg-emerald-50 text-[#0F3D2E] font-bold'
+                              ? 'bg-emerald-50 text-[#0D3B2E] font-bold'
                               : 'text-gray-700 hover:bg-gray-50 font-medium'
                           }`}
                         >
@@ -364,7 +366,7 @@ export const Navbar: React.FC = () => {
                             </div>
                           </div>
                           {isSelected && (
-                            <Check className="w-4 h-4 text-[#0F3D2E] shrink-0" />
+                            <Check className="w-4 h-4 text-[#0D3B2E] shrink-0" />
                           )}
                         </button>
                       );
@@ -378,7 +380,7 @@ export const Navbar: React.FC = () => {
                         setIsLocalityModalOpen(true);
                         setIsLocationDropdownOpen(false);
                       }}
-                      className="text-xs font-semibold text-[#0F3D2E] hover:underline"
+                      className="text-xs font-semibold text-[#0D3B2E] hover:underline"
                     >
                       View all coverage →
                     </button>
@@ -401,10 +403,10 @@ export const Navbar: React.FC = () => {
                 onClick={() => setIsServicesMegaMenuOpen(!isServicesMegaMenuOpen)}
                 aria-expanded={isServicesMegaMenuOpen}
                 aria-haspopup="true"
-                className={`flex items-center space-x-1 py-1.5 transition-colors focus-visible:ring-2 focus-visible:ring-[#0F3D2E] focus-visible:outline-none rounded-lg cursor-pointer ${
+                className={`flex items-center space-x-1 py-1.5 transition-colors focus-visible:ring-2 focus-visible:ring-[#0D3B2E] focus-visible:outline-none rounded-lg cursor-pointer ${
                   isServicesMegaMenuOpen || currentPage === 'services'
-                    ? 'text-[#0F3D2E] font-bold'
-                    : 'hover:text-[#0F3D2E]'
+                    ? 'text-[#0D3B2E] font-bold'
+                    : 'hover:text-[#0D3B2E]'
                 }`}
               >
                 <span>Services</span>
@@ -424,7 +426,7 @@ export const Navbar: React.FC = () => {
                 >
                   <div className="flex items-center justify-between pb-3 mb-3 border-b border-gray-100">
                     <div>
-                      <h3 className="text-sm font-bold text-[#0F3D2E]">
+                      <h3 className="text-sm font-bold text-[#0D3B2E]">
                         Doorstep Home Services & Repairs
                       </h3>
                       <p className="text-xs text-gray-500">
@@ -436,7 +438,7 @@ export const Navbar: React.FC = () => {
                         setCurrentPage('services');
                         setIsServicesMegaMenuOpen(false);
                       }}
-                      className="text-xs font-semibold text-[#0F3D2E] hover:underline flex items-center space-x-1"
+                      className="text-xs font-semibold text-[#0D3B2E] hover:underline flex items-center space-x-1"
                     >
                       <span>All 35+ Services</span>
                       <ArrowRight className="w-3.5 h-3.5" />
@@ -454,7 +456,7 @@ export const Navbar: React.FC = () => {
                             setCurrentPage('services');
                             setIsServicesMegaMenuOpen(false);
                           }}
-                          className="flex items-start space-x-3 p-2.5 rounded-xl text-left hover:bg-gray-50 transition-colors group focus-visible:ring-2 focus-visible:ring-[#0F3D2E] focus-visible:outline-none"
+                          className="flex items-start space-x-3 p-2.5 rounded-xl text-left hover:bg-gray-50 transition-colors group focus-visible:ring-2 focus-visible:ring-[#0D3B2E] focus-visible:outline-none"
                         >
                           <div
                             className={`w-9 h-9 rounded-xl flex items-center justify-center shrink-0 ${cat.accent} transition-transform group-hover:scale-105`}
@@ -462,7 +464,7 @@ export const Navbar: React.FC = () => {
                             <Icon className="w-4 h-4" />
                           </div>
                           <div>
-                            <div className="text-xs font-bold text-gray-900 group-hover:text-[#0F3D2E]">
+                            <div className="text-xs font-bold text-gray-900 group-hover:text-[#0D3B2E]">
                               {cat.name}
                             </div>
                             <div className="text-[11px] text-gray-500 leading-snug">
@@ -475,9 +477,9 @@ export const Navbar: React.FC = () => {
                   </div>
 
                   {/* Mega-menu Bottom Banner for Home Projects */}
-                  <div className="mt-4 pt-3 border-t border-gray-100 flex items-center justify-between bg-[#0F3D2E]/5 rounded-xl px-4 py-2.5">
-                    <div className="flex items-center space-x-2 text-xs font-semibold text-[#0F3D2E]">
-                      <HardHat className="w-4 h-4 text-[#F28C28]" />
+                  <div className="mt-4 pt-3 border-t border-gray-100 flex items-center justify-between bg-[#0D3B2E]/5 rounded-xl px-4 py-2.5">
+                    <div className="flex items-center space-x-2 text-xs font-semibold text-[#0D3B2E]">
+                      <HardHat className="w-4 h-4 text-[#F79324]" />
                       <span>Planning turnkey renovation or modular kitchen?</span>
                     </div>
                     <button
@@ -485,7 +487,7 @@ export const Navbar: React.FC = () => {
                         setCurrentPage('projects');
                         setIsServicesMegaMenuOpen(false);
                       }}
-                      className="text-xs font-bold text-[#0F3D2E] hover:underline"
+                      className="text-xs font-bold text-[#0D3B2E] hover:underline"
                     >
                       View Home Projects →
                     </button>
@@ -497,10 +499,10 @@ export const Navbar: React.FC = () => {
             {/* Home Projects Link */}
             <button
               onClick={() => setCurrentPage('projects')}
-              className={`py-1.5 transition-colors focus-visible:ring-2 focus-visible:ring-[#0F3D2E] focus-visible:outline-none rounded-lg cursor-pointer ${
+              className={`py-1.5 transition-colors focus-visible:ring-2 focus-visible:ring-[#0D3B2E] focus-visible:outline-none rounded-lg cursor-pointer ${
                 currentPage === 'projects'
-                  ? 'text-[#0F3D2E] font-bold border-b-2 border-[#0F3D2E]'
-                  : 'hover:text-[#0F3D2E]'
+                  ? 'text-[#0D3B2E] font-bold border-b-2 border-[#0D3B2E]'
+                  : 'hover:text-[#0D3B2E]'
               }`}
             >
               Home Projects
@@ -509,10 +511,10 @@ export const Navbar: React.FC = () => {
             {/* How It Works Link */}
             <button
               onClick={() => setCurrentPage('how-it-works')}
-              className={`py-1.5 transition-colors focus-visible:ring-2 focus-visible:ring-[#0F3D2E] focus-visible:outline-none rounded-lg cursor-pointer ${
+              className={`py-1.5 transition-colors focus-visible:ring-2 focus-visible:ring-[#0D3B2E] focus-visible:outline-none rounded-lg cursor-pointer ${
                 currentPage === 'how-it-works'
-                  ? 'text-[#0F3D2E] font-bold border-b-2 border-[#0F3D2E]'
-                  : 'hover:text-[#0F3D2E]'
+                  ? 'text-[#0D3B2E] font-bold border-b-2 border-[#0D3B2E]'
+                  : 'hover:text-[#0D3B2E]'
               }`}
             >
               How It Works
@@ -521,10 +523,10 @@ export const Navbar: React.FC = () => {
             {/* Become a Partner Link */}
             <button
               onClick={() => setCurrentPage('become-partner')}
-              className={`py-1.5 transition-colors focus-visible:ring-2 focus-visible:ring-[#0F3D2E] focus-visible:outline-none rounded-lg cursor-pointer ${
+              className={`py-1.5 transition-colors focus-visible:ring-2 focus-visible:ring-[#0D3B2E] focus-visible:outline-none rounded-lg cursor-pointer ${
                 currentPage === 'become-partner'
-                  ? 'text-[#0F3D2E] font-bold border-b-2 border-[#0F3D2E]'
-                  : 'hover:text-[#0F3D2E]'
+                  ? 'text-[#0D3B2E] font-bold border-b-2 border-[#0D3B2E]'
+                  : 'hover:text-[#0D3B2E]'
               }`}
             >
               Become a Partner
@@ -537,12 +539,12 @@ export const Navbar: React.FC = () => {
             {currentUser && activeCustomerOrder && (
               <button
                 onClick={() => setActiveTrackingRequestId(activeCustomerOrder.id)}
-                className="hidden xl:inline-flex items-center space-x-1.5 px-2.5 py-1.5 rounded-lg bg-emerald-50 hover:bg-emerald-100 text-[#0F3D2E] border border-emerald-200 text-xs font-semibold transition-colors focus-visible:ring-2 focus-visible:ring-[#0F3D2E] focus-visible:outline-none"
+                className="hidden xl:inline-flex items-center space-x-1.5 px-2.5 py-1.5 rounded-lg bg-emerald-50 hover:bg-emerald-100 text-[#0D3B2E] border border-emerald-200 text-xs font-semibold transition-colors focus-visible:ring-2 focus-visible:ring-[#0D3B2E] focus-visible:outline-none"
                 title={`Track Order #${activeCustomerOrder.id}`}
                 aria-label={`Track active order #${activeCustomerOrder.id}`}
               >
-                <span className="w-2 h-2 rounded-full bg-[#F28C28] animate-pulse" />
-                <PackageCheck className="w-3.5 h-3.5 text-[#0F3D2E]" />
+                <span className="w-2 h-2 rounded-full bg-[#F79324] animate-pulse" />
+                <PackageCheck className="w-3.5 h-3.5 text-[#0D3B2E]" />
                 <span className="truncate max-w-[100px]">Track #{activeCustomerOrder.id}</span>
               </button>
             )}
@@ -550,11 +552,11 @@ export const Navbar: React.FC = () => {
             {/* Direct Click-to-Call Button */}
             <a
               href="tel:+918284018909"
-              className="p-2 sm:p-2.5 rounded-xl border border-gray-200 text-[#0F3D2E] hover:bg-gray-50 hover:border-[#0F3D2E] transition-all focus-visible:ring-2 focus-visible:ring-[#0F3D2E] focus-visible:outline-none"
+              className="w-9 h-9 sm:w-auto sm:h-auto p-2 sm:p-2.5 rounded-xl border border-gray-200 text-[#0D3B2E] hover:bg-gray-50 hover:border-[#0D3B2E] flex items-center justify-center transition-all focus-visible:ring-2 focus-visible:ring-[#0D3B2E] focus-visible:outline-none"
               aria-label="Call UrbanCare Support +91 8284018909"
               title="Call UrbanCare: +91 8284018909"
             >
-              <Phone className="w-4 h-4 text-[#0F3D2E]" />
+              <Phone className="w-4 h-4 text-[#0D3B2E]" />
             </a>
 
             {/* Direct Click-to-WhatsApp Button */}
@@ -562,23 +564,23 @@ export const Navbar: React.FC = () => {
               href="https://wa.me/918284018909"
               target="_blank"
               rel="noopener noreferrer"
-              className="p-2 sm:p-2.5 rounded-xl border border-emerald-200 bg-emerald-50/60 text-emerald-800 hover:bg-emerald-100 hover:border-emerald-400 transition-all focus-visible:ring-2 focus-visible:ring-emerald-600 focus-visible:outline-none"
+              className="w-9 h-9 sm:w-auto sm:h-auto p-2 sm:p-2.5 rounded-xl border border-emerald-200 bg-emerald-50/60 text-emerald-800 hover:bg-emerald-100 hover:border-emerald-400 flex items-center justify-center transition-all focus-visible:ring-2 focus-visible:ring-emerald-600 focus-visible:outline-none"
               aria-label="Chat with UrbanCare on WhatsApp +91 8284018909"
               title="WhatsApp: +91 8284018909"
             >
-              <MessageCircle className="w-4 h-4 text-emerald-600" />
+              <MessageCircle className="w-4 h-4 text-[#25D366]" />
             </a>
 
-            {/* Basket Button (if logged-in customer has items) */}
-            {currentUser && currentRole === 'customer' && cartTotal.itemCount > 0 && (
+            {/* Basket Button (if customer has items in cart) */}
+            {currentRole === 'customer' && cartTotal.itemCount > 0 && (
               <button
                 onClick={() => setIsCartDrawerOpen(true)}
-                className="relative p-2 sm:p-2.5 rounded-xl border border-[#0F3D2E] bg-[#0F3D2E] text-white hover:bg-[#144d37] transition-all focus-visible:ring-2 focus-visible:ring-[#0F3D2E] focus-visible:outline-none"
+                className="relative w-9 h-9 sm:w-auto sm:h-auto p-2 sm:p-2.5 rounded-xl border border-[#0D3B2E] bg-[#0D3B2E] text-white hover:bg-[#0A2E24] flex items-center justify-center transition-all focus-visible:ring-2 focus-visible:ring-[#0D3B2E] focus-visible:outline-none cursor-pointer"
                 aria-label={`View Basket with ${cartTotal.itemCount} items`}
                 title="View Basket"
               >
                 <ShoppingBag className="w-4 h-4" />
-                <span className="absolute -top-1.5 -right-1.5 bg-[#F28C28] text-white text-[10px] font-bold w-4 h-4 rounded-full flex items-center justify-center shadow-xs">
+                <span className="absolute -top-1.5 -right-1.5 bg-[#F79324] text-[#0D3B2E] text-[10px] font-bold w-4 h-4 rounded-full flex items-center justify-center shadow-xs">
                   {cartTotal.itemCount}
                 </span>
               </button>
@@ -586,18 +588,19 @@ export const Navbar: React.FC = () => {
 
             {/* Public Auth Buttons (Logged Out) or User Account Menu (Logged In) */}
             {!isLoggedIn ? (
-              <div className="flex items-center space-x-2">
+              <div className="flex items-center space-x-1 sm:space-x-2">
                 <button
                   type="button"
                   onClick={() => openAuthModal('login')}
-                  className="px-3 py-2 rounded-xl border border-gray-300 hover:border-[#0F3D2E] text-[#0F3D2E] text-xs font-bold transition-colors focus-visible:ring-2 focus-visible:ring-[#0F3D2E] cursor-pointer"
+                  className="px-2 sm:px-3 py-1.5 sm:py-2 rounded-xl border border-gray-300 hover:border-[#0D3B2E] text-[#0D3B2E] text-[11px] sm:text-xs font-bold transition-colors focus-visible:ring-2 focus-visible:ring-[#0D3B2E] cursor-pointer whitespace-nowrap"
+                  aria-label="Sign in to your account"
                 >
                   Sign in
                 </button>
                 <button
                   type="button"
                   onClick={() => openAuthModal('register')}
-                  className="px-3.5 py-2 rounded-xl bg-[#0F3D2E] hover:bg-[#144d37] text-white text-xs font-bold transition-all shadow-xs focus-visible:ring-2 focus-visible:ring-[#0F3D2E] cursor-pointer"
+                  className="hidden sm:inline-block px-3.5 py-2 rounded-xl bg-[#0D3B2E] hover:bg-[#144d37] text-white text-xs font-bold transition-all shadow-xs focus-visible:ring-2 focus-visible:ring-[#0D3B2E] cursor-pointer"
                 >
                   Sign up
                 </button>
@@ -610,21 +613,21 @@ export const Navbar: React.FC = () => {
                   aria-expanded={isSignInDropdownOpen}
                   aria-haspopup="menu"
                   aria-label="User account menu"
-                  className="flex items-center space-x-2 px-2.5 sm:px-3 py-1.5 rounded-xl border border-gray-200 hover:border-[#0F3D2E] text-[#0F3D2E] text-xs font-semibold transition-colors focus-visible:ring-2 focus-visible:ring-[#0F3D2E] cursor-pointer"
+                  className="flex items-center space-x-1 sm:space-x-2 px-2 sm:px-3 py-1.5 rounded-xl border border-gray-200 hover:border-[#0D3B2E] text-[#0D3B2E] text-xs font-semibold transition-colors focus-visible:ring-2 focus-visible:ring-[#0D3B2E] cursor-pointer"
                 >
-                  <div className="w-6 h-6 rounded-md bg-[#0F3D2E] text-white flex items-center justify-center font-bold text-xs">
+                  <div className="w-6 h-6 rounded-md bg-[#0D3B2E] text-white flex items-center justify-center font-bold text-xs shrink-0">
                     {displayName.charAt(0).toUpperCase()}
                   </div>
                   <div className="hidden sm:flex flex-col text-left leading-tight">
                     <span className="text-xs font-bold text-gray-900 truncate max-w-[110px]">
                       {displayName.split(' ')[0]}
                     </span>
-                    <span className="text-[10px] font-semibold text-[#0F3D2E]">
+                    <span className="text-[10px] font-semibold text-[#0D3B2E]">
                       {roleLabel}
                     </span>
                   </div>
                   <ChevronDown
-                    className={`w-3.5 h-3.5 text-gray-500 transition-transform duration-150 ${
+                    className={`w-3.5 h-3.5 text-gray-500 transition-transform duration-150 shrink-0 ${
                       isSignInDropdownOpen ? 'rotate-180' : ''
                     }`}
                   />
@@ -639,7 +642,7 @@ export const Navbar: React.FC = () => {
                     <div className="p-2.5 border-b border-gray-100 mb-1">
                       <div className="flex items-center justify-between gap-1">
                         <span className="text-xs font-bold text-gray-900 truncate">{displayName}</span>
-                        <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-50 text-[#0F3D2E] border border-emerald-200 shrink-0">
+                        <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-50 text-[#0D3B2E] border border-emerald-200 shrink-0">
                           {roleLabel}
                         </span>
                       </div>
@@ -656,6 +659,7 @@ export const Navbar: React.FC = () => {
                         <button
                           role="menuitem"
                           onClick={() => {
+                            setAccountTab('overview');
                             setCurrentPage('account');
                             setIsSignInDropdownOpen(false);
                           }}
@@ -671,6 +675,7 @@ export const Navbar: React.FC = () => {
                         <button
                           role="menuitem"
                           onClick={() => {
+                            setAccountTab('bookings');
                             setCurrentPage('account');
                             setIsSignInDropdownOpen(false);
                           }}
@@ -690,10 +695,10 @@ export const Navbar: React.FC = () => {
                               setActiveTrackingRequestId(activeCustomerOrder.id);
                               setIsSignInDropdownOpen(false);
                             }}
-                            className="w-full text-left px-3 py-2 rounded-xl text-xs font-semibold text-[#0F3D2E] hover:bg-emerald-50 flex items-center justify-between transition-colors cursor-pointer"
+                            className="w-full text-left px-3 py-2 rounded-xl text-xs font-semibold text-[#0D3B2E] hover:bg-emerald-50 flex items-center justify-between transition-colors cursor-pointer"
                           >
                             <div className="flex items-center space-x-1.5">
-                              <span className="w-1.5 h-1.5 rounded-full bg-[#F28C28] animate-pulse" />
+                              <span className="w-1.5 h-1.5 rounded-full bg-[#F79324] animate-pulse" />
                               <span>Track #{activeCustomerOrder.id}</span>
                             </div>
                             <ChevronRight className="w-3.5 h-3.5 text-gray-400" />
@@ -709,13 +714,13 @@ export const Navbar: React.FC = () => {
                             setCurrentPage(staffPortalTarget);
                             setIsSignInDropdownOpen(false);
                           }}
-                          className="w-full text-left px-3 py-2.5 rounded-xl text-xs font-bold text-[#0F3D2E] bg-emerald-50 hover:bg-emerald-100/70 flex items-center justify-between transition-colors cursor-pointer"
+                          className="w-full text-left px-3 py-2.5 rounded-xl text-xs font-bold text-[#0D3B2E] bg-emerald-50 hover:bg-emerald-100/70 flex items-center justify-between transition-colors cursor-pointer"
                         >
                           <div className="flex items-center space-x-2">
-                            <Briefcase className="w-3.5 h-3.5 text-[#0F3D2E]" />
+                            <Briefcase className="w-3.5 h-3.5 text-[#0D3B2E]" />
                             <span>Go to my portal</span>
                           </div>
-                          <ChevronRight className="w-3.5 h-3.5 text-[#0F3D2E]" />
+                          <ChevronRight className="w-3.5 h-3.5 text-[#0D3B2E]" />
                         </button>
                       </>
                     )}
@@ -744,21 +749,21 @@ export const Navbar: React.FC = () => {
             {/* Filled Primary CTA: "Book a Service" (Desktop) */}
             <button
               onClick={handleBookService}
-              className="hidden sm:inline-flex items-center space-x-1.5 px-4 py-2.5 rounded-xl bg-[#F28C28] hover:bg-[#d9771e] text-white text-xs sm:text-sm font-bold shadow-xs hover:shadow-md active:scale-[0.98] transition-all focus-visible:ring-2 focus-visible:ring-[#0F3D2E] focus-visible:outline-none"
+              className="hidden sm:inline-flex items-center space-x-1.5 px-4 py-2.5 rounded-xl bg-[#F79324] hover:bg-[#E2810F] text-[#0D3B2E] text-xs sm:text-sm font-bold shadow-xs hover:shadow-md active:scale-[0.98] transition-all focus-visible:ring-2 focus-visible:ring-[#0D3B2E] focus-visible:outline-none cursor-pointer"
               aria-label="Book a Service"
             >
               <span>Book a Service</span>
-              <ArrowRight className="w-4 h-4" />
+              <ArrowRight className="w-4 h-4 text-[#0D3B2E]" />
             </button>
 
             {/* Mobile Hamburger Button */}
             <button
               onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
-              className="lg:hidden p-2 rounded-xl text-[#0F3D2E] hover:bg-gray-100 transition-colors focus-visible:ring-2 focus-visible:ring-[#0F3D2E] focus-visible:outline-none"
+              className="lg:hidden p-1.5 sm:p-2 rounded-xl text-[#0D3B2E] hover:bg-gray-100 transition-colors focus-visible:ring-2 focus-visible:ring-[#0D3B2E] focus-visible:outline-none shrink-0"
               aria-label={mobileMenuOpen ? 'Close navigation menu' : 'Open navigation menu'}
               aria-expanded={mobileMenuOpen}
             >
-              {mobileMenuOpen ? <X className="w-6 h-6" /> : <Menu className="w-6 h-6" />}
+              {mobileMenuOpen ? <X className="w-5 h-5 sm:w-6 sm:h-6" /> : <Menu className="w-5 h-5 sm:w-6 sm:h-6" />}
             </button>
           </div>
         </div>
@@ -774,11 +779,11 @@ export const Navbar: React.FC = () => {
             {/* Drawer Top Bar */}
             <div className="h-16 border-b border-gray-100 px-4 flex items-center justify-between">
               <div className="flex items-center space-x-2.5">
-                <div className="w-8 h-8 rounded-xl bg-[#0F3D2E] text-white flex items-center justify-center font-bold text-sm">
+                <div className="w-8 h-8 rounded-xl bg-[#0D3B2E] text-white flex items-center justify-center font-bold text-sm">
                   U
                 </div>
                 <div>
-                  <div className="text-sm font-bold text-[#0F3D2E] leading-none">
+                  <div className="text-sm font-bold text-[#0D3B2E] leading-none">
                     UrbanCare Solution
                   </div>
                   <div className="text-[10px] text-gray-500 leading-tight">
@@ -803,13 +808,13 @@ export const Navbar: React.FC = () => {
                   setIsLocalityModalOpen(true);
                   setMobileMenuOpen(false);
                 }}
-                className="w-full flex items-center justify-between p-3 rounded-xl bg-gray-50 border border-gray-200/80 text-xs font-semibold text-[#0F3D2E]"
+                className="w-full flex items-center justify-between p-3 rounded-xl bg-gray-50 border border-gray-200/80 text-xs font-semibold text-[#0D3B2E]"
               >
                 <div className="flex items-center space-x-2">
-                  <MapPin className="w-4 h-4 text-[#0F3D2E]" />
+                  <MapPin className="w-4 h-4 text-[#0D3B2E]" />
                   <span>Serving: {shortSectorName} (JLPL & Mohali)</span>
                 </div>
-                <span className="text-[#F28C28] font-bold">Change ▾</span>
+                <span className="text-[#F79324] font-bold">Change ▾</span>
               </button>
 
               {/* SECTION 1: SERVICES LISTED FIRST */}
@@ -823,7 +828,7 @@ export const Navbar: React.FC = () => {
                       setCurrentPage('services');
                       setMobileMenuOpen(false);
                     }}
-                    className="text-xs font-semibold text-[#0F3D2E] hover:underline"
+                    className="text-xs font-semibold text-[#0D3B2E] hover:underline"
                   >
                     View All 35+ →
                   </button>
@@ -868,7 +873,7 @@ export const Navbar: React.FC = () => {
                   className="w-full p-2.5 rounded-xl bg-gray-50 hover:bg-gray-100 text-left font-semibold text-xs text-gray-900 flex items-center justify-between"
                 >
                   <div className="flex items-center space-x-2">
-                    <HardHat className="w-4 h-4 text-[#F28C28]" />
+                    <HardHat className="w-4 h-4 text-[#F79324]" />
                     <span>Home Projects (Kitchen & Renovation)</span>
                   </div>
                   <ChevronRight className="w-4 h-4 text-gray-400" />
@@ -922,7 +927,7 @@ export const Navbar: React.FC = () => {
                         openAuthModal('login');
                         setMobileMenuOpen(false);
                       }}
-                      className="flex-1 py-2.5 px-3 rounded-xl border border-gray-300 text-[#0F3D2E] text-xs font-bold hover:bg-gray-50 transition-colors text-center cursor-pointer"
+                      className="flex-1 py-2.5 px-3 rounded-xl border border-gray-300 text-[#0D3B2E] text-xs font-bold hover:bg-gray-50 transition-colors text-center cursor-pointer"
                     >
                       Sign in
                     </button>
@@ -932,7 +937,7 @@ export const Navbar: React.FC = () => {
                         openAuthModal('register');
                         setMobileMenuOpen(false);
                       }}
-                      className="flex-1 py-2.5 px-3 rounded-xl bg-[#0F3D2E] text-white text-xs font-bold hover:bg-[#144d37] transition-all text-center shadow-xs cursor-pointer"
+                      className="flex-1 py-2.5 px-3 rounded-xl bg-[#0D3B2E] text-white text-xs font-bold hover:bg-[#144d37] transition-all text-center shadow-xs cursor-pointer"
                     >
                       Sign up
                     </button>
@@ -950,7 +955,7 @@ export const Navbar: React.FC = () => {
                           </div>
                         )}
                       </div>
-                      <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-white text-[#0F3D2E] border border-emerald-200 shrink-0">
+                      <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-white text-[#0D3B2E] border border-emerald-200 shrink-0">
                         {roleLabel}
                       </span>
                     </div>
@@ -960,24 +965,26 @@ export const Navbar: React.FC = () => {
                         <button
                           type="button"
                           onClick={() => {
+                            setAccountTab('overview');
                             setCurrentPage('account');
                             setMobileMenuOpen(false);
                           }}
-                          className="py-1.5 px-2.5 rounded-lg bg-white border border-emerald-200 text-xs font-bold text-[#0F3D2E] flex items-center justify-center space-x-1 hover:bg-emerald-50 transition-colors cursor-pointer"
+                          className="py-1.5 px-2.5 rounded-lg bg-white border border-emerald-200 text-xs font-bold text-[#0D3B2E] flex items-center justify-center space-x-1 hover:bg-emerald-50 transition-colors cursor-pointer"
                         >
-                          <User className="w-3.5 h-3.5 text-[#0F3D2E]" />
+                          <User className="w-3.5 h-3.5 text-[#0D3B2E]" />
                           <span>My Account</span>
                         </button>
 
                         <button
                           type="button"
                           onClick={() => {
+                            setAccountTab('bookings');
                             setCurrentPage('account');
                             setMobileMenuOpen(false);
                           }}
-                          className="py-1.5 px-2.5 rounded-lg bg-white border border-emerald-200 text-xs font-bold text-[#0F3D2E] flex items-center justify-center space-x-1 hover:bg-emerald-50 transition-colors cursor-pointer"
+                          className="py-1.5 px-2.5 rounded-lg bg-white border border-emerald-200 text-xs font-bold text-[#0D3B2E] flex items-center justify-center space-x-1 hover:bg-emerald-50 transition-colors cursor-pointer"
                         >
-                          <PackageCheck className="w-3.5 h-3.5 text-[#0F3D2E]" />
+                          <PackageCheck className="w-3.5 h-3.5 text-[#0D3B2E]" />
                           <span>My Bookings ({requests.length})</span>
                         </button>
                       </div>
@@ -988,7 +995,7 @@ export const Navbar: React.FC = () => {
                           setCurrentPage(staffPortalTarget);
                           setMobileMenuOpen(false);
                         }}
-                        className="w-full py-2 px-3 rounded-lg bg-[#0F3D2E] text-white text-xs font-bold flex items-center justify-center space-x-1.5 transition-colors cursor-pointer"
+                        className="w-full py-2 px-3 rounded-lg bg-[#0D3B2E] text-white text-xs font-bold flex items-center justify-center space-x-1.5 transition-colors cursor-pointer"
                       >
                         <Briefcase className="w-3.5 h-3.5" />
                         <span>Go to my portal</span>
@@ -1014,7 +1021,7 @@ export const Navbar: React.FC = () => {
               <div className="pt-2 border-t border-gray-100 flex items-center justify-between text-xs text-gray-600">
                 <a
                   href="tel:+918284018909"
-                  className="flex items-center space-x-1.5 font-semibold text-[#0F3D2E]"
+                  className="flex items-center space-x-1.5 font-semibold text-[#0D3B2E]"
                 >
                   <Phone className="w-3.5 h-3.5" />
                   <span>+91 8284018909</span>

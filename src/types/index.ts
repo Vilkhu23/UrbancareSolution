@@ -107,6 +107,7 @@ export interface ServicePackage {
   id: string;
   name: string;
   category: string;
+  category_id?: string;
   subcategory?: string;
   description: string;
   price: number;

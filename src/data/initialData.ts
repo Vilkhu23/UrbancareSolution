@@ -127,7 +127,7 @@ export const SERVICE_CATEGORIES = [
     id: 'ac-appliances', 
     name: 'AC & Appliances', 
     icon: 'Wrench', 
-    count: 18, 
+    count: 14, 
     popular: true,
     description: 'AC servicing, gas refills, compressor repair, and major appliances.',
     subcategories: [
@@ -144,7 +144,7 @@ export const SERVICE_CATEGORIES = [
     id: 'electrical', 
     name: 'Electrical', 
     icon: 'Zap', 
-    count: 6, 
+    count: 2, 
     popular: true,
     description: 'Ceiling fans, switchboards, MCB trip diagnostics & lighting.',
     subcategories: ['Fans & Lights', 'Wiring & Safety', 'Inverter & Battery']
@@ -153,7 +153,7 @@ export const SERVICE_CATEGORIES = [
     id: 'plumbing', 
     name: 'Plumbing', 
     icon: 'Droplets', 
-    count: 6, 
+    count: 2, 
     popular: true,
     description: 'Water motors, taps, leakages, diverters, and overhead tanks.',
     subcategories: ['Motors & Pumps', 'Bathroom & Kitchen', 'Drainage & Tanks']
@@ -162,7 +162,7 @@ export const SERVICE_CATEGORIES = [
     id: 'carpentry', 
     name: 'Carpentry & Handyman', 
     icon: 'Hammer', 
-    count: 5, 
+    count: 1, 
     popular: true,
     description: 'Door locks, handles, furniture assembly, curtain rods & hinges.',
     subcategories: ['Doors & Windows', 'Furniture & Assembly', 'General Handyman']
@@ -186,16 +186,20 @@ export const SERVICE_CATEGORIES = [
     id: 'cleaning', 
     name: 'Home Cleaning', 
     icon: 'Sparkles', 
-    count: 5, 
+    count: 1, 
     popular: true,
     description: 'Intense kitchen degreasing, bathroom descaling & full home care.',
-    subcategories: ['Kitchen', 'Bathroom', 'Full Home & Sofa']
+    subcategories: [
+      'Kitchen',
+      'Bathroom',
+      'Full Home & Sofa'
+    ]
   },
   { 
     id: 'painting', 
     name: 'Painting & Improvement', 
     icon: 'Paintbrush', 
-    count: 4, 
+    count: 2, 
     popular: true,
     description: 'Damp treatment, wall touch-ups, waterproofing & full home colors.',
     subcategories: ['Wall Painting', 'Waterproofing & Damp', 'Wood Polish']
@@ -204,7 +208,7 @@ export const SERVICE_CATEGORIES = [
     id: 'pest-control', 
     name: 'Pest Control', 
     icon: 'ShieldAlert', 
-    count: 3, 
+    count: 1, 
     popular: false,
     description: 'Drill-and-inject termite shield, herbal cockroach gel.',
     subcategories: ['Termite Care', 'General Pest Gel']
@@ -213,7 +217,7 @@ export const SERVICE_CATEGORIES = [
     id: 'home-projects', 
     name: 'Home Projects', 
     icon: 'Home', 
-    count: 6, 
+    count: 1, 
     popular: true,
     description: 'Turnkey renovation, modular kitchens & bathroom remodeling.',
     subcategories: ['Turnkey Renovation', 'Modular Kitchens', 'Civil & Remodeling']
@@ -973,7 +977,7 @@ const RAW_SERVICES: any[] = [
     badge: 'Top Rated',
     active: true,
     serviceAreas: ['Sector 104', 'Sector 105', 'Sector 110', 'Sector 111'],
-    sortOrder: 19,
+    sortOrder: 23,
     completedBookingsCount: 178,
     rating: 4.9,
     faqs: [
@@ -986,7 +990,7 @@ const RAW_SERVICES: any[] = [
     frequentlyBookedTogetherIds: ['srv-ac-foam']
   },
 
-  // ==========================================
+    // ==========================================
   // CARPENTRY CATEGORY
   // ==========================================
   {
@@ -1436,6 +1440,7 @@ export const INITIAL_PACKAGES: ServicePackage[] = [
     id: 'pkg-2-ac-foam',
     name: '2 AC Foam-Jet Package',
     category: 'AC & Appliances',
+    category_id: 'ac-appliances',
     subcategory: 'AC Service & Repair',
     description: 'Both ACs full foaming wash + outdoor coil pressure blast + free gas pressure check. Dedicated two-artisan crew with zero doorstep fee.',
     price: 1299,
@@ -1464,6 +1469,7 @@ export const INITIAL_PACKAGES: ServicePackage[] = [
     id: 'pkg-ac-complete-care',
     name: 'Complete AC Care Package',
     category: 'AC & Appliances',
+    category_id: 'ac-appliances',
     subcategory: 'AC Service & Repair',
     description: 'Comprehensive seasonal care: 1 Split AC foam-jet wash, outdoor unit jet blast, electrical terminal tighten, capacitor rating test, and up to 25% refrigerant gas top-up included.',
     price: 1899,
@@ -1492,6 +1498,7 @@ export const INITIAL_PACKAGES: ServicePackage[] = [
     id: 'pkg-home-elec-audit',
     name: 'Full Home Electrical Safety Audit',
     category: 'Electrical',
+    category_id: 'electrical',
     subcategory: 'Wiring & Safety',
     description: 'MCB load balancing, earthing continuity test, and 12-point socket thermal check. Comprehensive inspection of switches, inverter wiring and distribution box.',
     price: 649,
@@ -1514,17 +1521,19 @@ export const INITIAL_PACKAGES: ServicePackage[] = [
     id: 'pkg-deep-clean-combo',
     name: 'Kitchen & Bathroom Duo Clean',
     category: 'Home Cleaning',
+    category_id: 'cleaning',
     subcategory: 'Kitchen',
-    description: 'Kitchen degreasing combined with one master bathroom acid-free tile descaling. Spotless taps, mirrors, exhaust and tiles.',
+    description: 'Both intensive wet zones: full kitchen degreasing + one complete bathroom acid-free scrub. Sanitized, descaled and sparkling clean with zero visit fee.',
     price: 1399,
     originalPrice: 1798,
-    savings: 'Save ₹399',
+    savings: 'Save ₹399 · Zero Visit Fee',
     duration: '150 mins',
     included: [
-      'Full kitchen chimney & stove degreasing',
-      'Bathroom hard water stain removal',
-      'Grout scrubbing with single-disc machine',
-      'Sanitizing fog spray'
+      'Kitchen degreasing & baffle chimney wash',
+      '1 Master bathroom acid-free tile descaling',
+      'Spotless tap polishing and mirror shine',
+      'Drain siphon cleaning',
+      'Zero doorstep visit fee included'
     ],
     serviceAreas: ['Sector 104', 'Sector 105', 'Sector 110', 'Sector 111'],
     active: true,

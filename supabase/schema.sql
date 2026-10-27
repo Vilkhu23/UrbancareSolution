@@ -117,8 +117,18 @@ CREATE TABLE services (
     id TEXT PRIMARY KEY,
     category_id TEXT NOT NULL REFERENCES service_categories(id) ON DELETE CASCADE,
     name TEXT NOT NULL,
+    subcategory TEXT,
     price NUMERIC(10, 2) NOT NULL,
     market_average NUMERIC(10, 2),
+    price_type TEXT DEFAULT 'fixed',
+    unit_type TEXT,
+    visit_fee NUMERIC(10, 2) DEFAULT 99,
+    discount TEXT,
+    warranty TEXT,
+    material_policy TEXT,
+    estimated_duration TEXT,
+    badge TEXT,
+    display_order INTEGER DEFAULT 1,
     description TEXT,
     rating NUMERIC(3, 2) DEFAULT 4.8,
     review_count INTEGER DEFAULT 120,
@@ -126,10 +136,35 @@ CREATE TABLE services (
     features JSONB NOT NULL DEFAULT '[]'::jsonb,
     addons JSONB NOT NULL DEFAULT '[]'::jsonb,
     is_popular BOOLEAN DEFAULT FALSE,
+    active BOOLEAN DEFAULT TRUE,
     created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
 CREATE INDEX idx_services_category ON services(category_id);
+CREATE INDEX idx_services_subcategory ON services(subcategory);
+
+-- 6b. SERVICE PACKAGES & MULTI-UNIT BUNDLES
+CREATE TABLE service_packages (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    category_id TEXT NOT NULL REFERENCES service_categories(id) ON DELETE CASCADE,
+    category TEXT NOT NULL,
+    subcategory TEXT,
+    description TEXT,
+    price NUMERIC(10, 2) NOT NULL,
+    original_price NUMERIC(10, 2) NOT NULL,
+    savings TEXT,
+    duration TEXT,
+    included JSONB NOT NULL DEFAULT '[]'::jsonb,
+    service_areas JSONB NOT NULL DEFAULT '["Sector 94", "Sector 104", "Sector 105", "Sector 110", "Sector 111"]'::jsonb,
+    rating NUMERIC(3, 2) DEFAULT 4.9,
+    pricing_type TEXT DEFAULT 'package',
+    active BOOLEAN DEFAULT TRUE,
+    display_order INTEGER DEFAULT 1,
+    created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE INDEX idx_service_packages_category ON service_packages(category_id);
 
 -- 7. DOMESTIC SERVICE REQUESTS / BOOKINGS & DISPATCHES
 CREATE TABLE service_requests (

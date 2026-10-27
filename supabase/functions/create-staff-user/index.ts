@@ -215,7 +215,8 @@ serve(async (req: Request) => {
     const token = authHeader.replace("Bearer ", "");
 
     // Helper to completely roll back all records created in a failed attempt
-    const performRollback = async (userId: string, targetTable?: string | null, entityId?: string | null) => {
+    const performRollback = async (userId: string | null, targetTable?: string | null, entityId?: string | null) => {
+      if (!userId) return;
       try {
         if (entityId && targetTable) {
           await supabaseAdmin.from(targetTable).delete().eq("id", entityId);

@@ -20,14 +20,14 @@ export const Footer: React.FC = () => {
   } = useApp();
 
   return (
-    <footer className="bg-[#0F3D2E] text-white pt-12 pb-24 md:pb-12 border-t border-[#1a5742]">
+    <footer className="bg-[#0D3B2E] text-white pt-12 pb-24 md:pb-12 border-t border-[#1a5742]">
       <div className="max-w-7xl mx-auto px-4 sm:px-6">
         {/* Top Brand & Links Grid */}
         <div className="grid grid-cols-1 md:grid-cols-5 gap-8 mb-10">
           {/* Brand Info (2 cols on desktop) */}
           <div className="md:col-span-2 space-y-4">
             <div className="flex items-center space-x-2.5">
-              <div className="w-9 h-9 rounded-xl bg-[#F28C28] text-[#0F3D2E] flex items-center justify-center font-black text-lg shadow-sm">
+              <div className="w-9 h-9 rounded-xl bg-[#F79324] text-[#0D3B2E] flex items-center justify-center font-black text-lg shadow-sm">
                 U
               </div>
               <div>
@@ -46,17 +46,17 @@ export const Footer: React.FC = () => {
 
             <div className="space-y-1.5 text-xs text-emerald-100/90 pt-1">
               <div className="flex items-start space-x-2">
-                <MapPin className="w-4 h-4 text-[#F28C28] shrink-0 mt-0.5" />
+                <MapPin className="w-4 h-4 text-[#F79324] shrink-0 mt-0.5" />
                 <span>SCF 14, Sector 125, Sunny Enclave, Kharar, Punjab 140301</span>
               </div>
               <div className="flex items-center space-x-2">
-                <Phone className="w-4 h-4 text-[#F28C28] shrink-0" />
+                <Phone className="w-4 h-4 text-[#F79324] shrink-0" />
                 <a href="tel:+918284018909" className="hover:text-white underline font-medium">
                   +91 82840 18909 (Direct Dispatch)
                 </a>
               </div>
               <div className="flex items-center space-x-2">
-                <Mail className="w-4 h-4 text-[#F28C28] shrink-0" />
+                <Mail className="w-4 h-4 text-[#F79324] shrink-0" />
                 <a href="mailto:dispatch@urbancaresolution.in" className="hover:text-white underline">
                   dispatch@urbancaresolution.in
                 </a>
@@ -113,7 +113,7 @@ export const Footer: React.FC = () => {
               <li>
                 <button
                   onClick={() => setCurrentPage('projects')}
-                  className="hover:text-white transition-colors text-left text-[#F28C28] font-semibold flex items-center space-x-1"
+                  className="hover:text-white transition-colors text-left text-[#F79324] font-semibold flex items-center space-x-1"
                 >
                   <span>Home Projects & Kitchens</span>
                   <ArrowRight className="w-3 h-3" />
@@ -235,7 +235,7 @@ export const Footer: React.FC = () => {
           </div>
 
           <div className="flex items-center space-x-2 text-[11px] text-emerald-300">
-            <ShieldCheck className="w-4 h-4 text-[#F28C28]" />
+            <ShieldCheck className="w-4 h-4 text-[#F79324]" />
             <span>₹0 Advance · 30-Day Workmanship Warranty</span>
           </div>
         </div>

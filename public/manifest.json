@@ -1,0 +1,57 @@
+{
+  "id": "/urbancare-app",
+  "name": "UrbanCare Solution - Your Space | Our Care",
+  "short_name": "UrbanCare",
+  "description": "Operations-led local home services and home projects marketplace for Kharar, Mohali, Sunny Enclave, Sector 115 and Landran.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "portrait-primary",
+  "background_color": "#F7F8F7",
+  "theme_color": "#0D3B2E",
+  "lang": "en",
+  "dir": "ltr",
+  "categories": ["lifestyle", "utilities", "business"],
+  "icons": [
+    {
+      "src": "/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    },
+    {
+      "src": "/icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ],
+  "shortcuts": [
+    {
+      "name": "Browse Services",
+      "short_name": "Services",
+      "description": "Browse electrician, plumber, AC and cleaning services in Kharar",
+      "url": "/#/services",
+      "icons": [{ "src": "/icon-192.png", "sizes": "192x192" }]
+    },
+    {
+      "name": "My Bookings",
+      "short_name": "Bookings",
+      "description": "Track active and past home service bookings",
+      "url": "/#/account",
+      "icons": [{ "src": "/icon-192.png", "sizes": "192x192" }]
+    }
+  ]
+}
