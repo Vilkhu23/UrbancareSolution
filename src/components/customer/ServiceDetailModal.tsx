@@ -45,15 +45,10 @@ export const ServiceDetailModal: React.FC = () => {
   const exclusions = service.excluded_items || service.excluded || [];
 
   const handleBookNow = () => {
-    if (!currentUser) {
-      setSelectedDetailServiceId(null);
-      setIsAuthModalOpen(true);
-      showToast('Please sign in or register to book this service.', 'info');
-      return;
-    }
     addToCart(service, 1);
     setSelectedDetailServiceId(null);
     setIsCartDrawerOpen(true);
+    showToast(`${service.name} added to your basket!`, 'success');
   };
 
   const handleRequestQuote = () => {

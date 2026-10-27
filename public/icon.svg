@@ -1,0 +1,30 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <defs>
+    <linearGradient id="ucGradient" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#0D3B2E" />
+      <stop offset="100%" stop-color="#08261E" />
+    </linearGradient>
+    <linearGradient id="accentGradient" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#FFA439" />
+      <stop offset="100%" stop-color="#F79324" />
+    </linearGradient>
+  </defs>
+  
+  <!-- Base background with rounded corners for maskable icon -->
+  <rect width="512" height="512" rx="112" fill="url(#ucGradient)" />
+  
+  <!-- Outer subtle accent ring -->
+  <circle cx="256" cy="256" r="200" fill="none" stroke="#165342" stroke-width="8" opacity="0.6" />
+  
+  <!-- Stylized Home & Care Shield Emblem -->
+  <!-- Roof / Arrow Structure -->
+  <path d="M 256 120 L 370 216 L 334 216 L 334 336 C 334 354 320 368 302 368 L 210 368 C 192 368 178 354 178 336 L 178 216 L 142 216 Z" 
+        fill="#FFFFFF" />
+        
+  <!-- Care Heart / Sprout Accent in Center -->
+  <path d="M 256 195 L 306 238 L 286 238 L 286 312 C 286 320 280 326 272 326 L 240 326 C 232 326 226 320 226 312 L 226 238 L 206 238 Z" 
+        fill="url(#accentGradient)" />
+        
+  <!-- Base Platform Accent -->
+  <rect x="190" y="388" width="132" height="18" rx="9" fill="#F79324" />
+</svg>

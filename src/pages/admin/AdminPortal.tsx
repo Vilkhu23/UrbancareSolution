@@ -68,7 +68,8 @@ import {
   Receipt,
   Wallet,
   Smartphone,
-  Building2
+  Building2,
+  Trash2
 } from 'lucide-react';
 import { adminReleasePhoneViaRpc } from '../../services/supabaseService';
 import {
@@ -118,6 +119,8 @@ export const AdminPortal: React.FC = () => {
     updateServicePricing,
     toggleServiceActive,
     addService,
+    deleteService,
+    deletePackage,
     projectRequests,
     updateProjectStatus,
     reviews,
@@ -185,6 +188,47 @@ export const AdminPortal: React.FC = () => {
   const [pricingSubTab, setPricingSubTab] = useState<'catalog' | 'history'>('catalog');
   const [pricingSearchQuery, setPricingSearchQuery] = useState('');
   const [pricingCategoryFilter, setPricingCategoryFilter] = useState('ALL');
+  const [adminServiceSearch, setAdminServiceSearch] = useState('');
+  const [adminPackageSearch, setAdminPackageSearch] = useState('');
+
+  const filteredAdminServices = useMemo(() => {
+    const q = adminServiceSearch.trim().toLowerCase();
+    if (!q) return services;
+    const tokens = q.split(/\s+/).filter(Boolean);
+    return services.filter((s) => {
+      const nameL = s.name.toLowerCase();
+      const catL = s.category.toLowerCase();
+      const subL = s.subcategory.toLowerCase();
+      const descL = s.description.toLowerCase();
+      return tokens.every(
+        (t) => nameL.includes(t) || catL.includes(t) || subL.includes(t) || descL.includes(t)
+      );
+    });
+  }, [services, adminServiceSearch]);
+
+  const filteredAdminPackages = useMemo(() => {
+    const q = adminPackageSearch.trim().toLowerCase();
+    if (!q) return packages;
+    const tokens = q.split(/\s+/).filter(Boolean);
+    return packages.filter((p) => {
+      const nameL = p.name.toLowerCase();
+      const catL = p.category.toLowerCase();
+      const descL = p.description.toLowerCase();
+      return tokens.every((t) => nameL.includes(t) || catL.includes(t) || descL.includes(t));
+    });
+  }, [packages, adminPackageSearch]);
+
+  const filteredPricingServices = useMemo(() => {
+    const q = pricingSearchQuery.trim().toLowerCase();
+    if (!q) return services;
+    const tokens = q.split(/\s+/).filter(Boolean);
+    return services.filter((s) => {
+      const nameL = s.name.toLowerCase();
+      const catL = s.category.toLowerCase();
+      const subL = s.subcategory.toLowerCase();
+      return tokens.every((t) => nameL.includes(t) || catL.includes(t) || subL.includes(t));
+    });
+  }, [services, pricingSearchQuery]);
 
   // Assignment Board filters
   const [boardTypeFilter, setBoardTypeFilter] = useState<'ALL' | 'EMPLOYEE' | 'VENDOR'>('ALL');
@@ -1873,11 +1917,11 @@ export const AdminPortal: React.FC = () => {
           {/* ======================================================== */}
           {activeAdminTab === 'services' && (
             <div className="bg-white rounded-2xl border border-[#c0c9c2]/50 p-5 shadow-xs space-y-4">
-              <div className="flex items-center justify-between">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
                 <div>
                   <h2 className="text-base font-black text-[#131b2e] flex items-center space-x-2">
                     <Wrench className="w-5 h-5 text-[#003523]" />
-                    <span>Services Catalogue ({services.length})</span>
+                    <span>Services Catalogue ({filteredAdminServices.length}{adminServiceSearch ? ` of ${services.length}` : ''})</span>
                   </h2>
                   <p className="text-xs text-[#707973]">
                     Active catalogue items with pricing types, warranty, and doorstep visit fees.
@@ -1890,6 +1934,30 @@ export const AdminPortal: React.FC = () => {
                   <Plus className="w-4 h-4 text-[#fe932c]" />
                   <span>Add New Service</span>
                 </button>
+              </div>
+
+              {/* Fast Search Query & Instant Deletion Bar */}
+              <div className="relative flex items-center">
+                <Search className="w-4 h-4 text-[#707973] absolute left-3.5 pointer-events-none" />
+                <input
+                  type="text"
+                  value={adminServiceSearch}
+                  onChange={(e) => setAdminServiceSearch(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Escape') setAdminServiceSearch('');
+                  }}
+                  placeholder="Fast search services by name, category, subcategory, or description... (Press Esc to clear)"
+                  className="w-full pl-9 pr-9 py-2.5 bg-[#faf8ff] border border-[#c0c9c2]/60 rounded-xl text-xs font-medium text-[#131b2e] placeholder-[#707973] focus:outline-none focus:ring-2 focus:ring-[#003523]/20 focus:border-[#003523] transition-all"
+                />
+                {adminServiceSearch && (
+                  <button
+                    onClick={() => setAdminServiceSearch('')}
+                    title="Clear search query (Esc)"
+                    className="absolute right-2.5 p-1 rounded-full text-[#707973] hover:text-[#131b2e] hover:bg-[#e2e8e0] transition-colors cursor-pointer"
+                  >
+                    <X className="w-3.5 h-3.5" />
+                  </button>
+                )}
               </div>
 
               <div className="overflow-x-auto">
@@ -1906,42 +1974,67 @@ export const AdminPortal: React.FC = () => {
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-[#c0c9c2]/30">
-                    {services.map((srv) => (
-                      <tr key={srv.id} className="hover:bg-[#faf8ff]">
-                        <td className="p-3 font-extrabold text-[#131b2e]">{srv.name}</td>
-                        <td className="p-3 text-[#707973]">{srv.category} · {srv.subcategory}</td>
-                        <td className="p-3 font-bold text-[#003523]">{srv.price_type}</td>
-                        <td className="p-3 font-mono font-bold">
-                          {srv.price_type === 'QUOTE_REQUIRED' ? 'Request a Quote' : `₹${srv.base_price}`}
-                        </td>
-                        <td className="p-3 text-[#707973]">{srv.duration} · {srv.warranty}</td>
-                        <td className="p-3">
-                          <span
-                            className={`px-2 py-0.5 rounded text-[10px] font-bold ${
-                              srv.active ? 'bg-[#c0edd3] text-[#003523]' : 'bg-gray-200 text-gray-700'
-                            }`}
+                    {filteredAdminServices.length === 0 ? (
+                      <tr>
+                        <td colSpan={7} className="p-8 text-center text-xs text-[#707973]">
+                          No services found matching &ldquo;<span className="font-bold text-[#131b2e]">{adminServiceSearch}</span>&rdquo;.
+                          <button
+                            onClick={() => setAdminServiceSearch('')}
+                            className="ml-2 font-bold text-[#003523] underline cursor-pointer"
                           >
-                            {srv.active ? 'Active' : 'Disabled'}
-                          </span>
-                        </td>
-                        <td className="p-3 text-right">
-                          <div className="flex items-center justify-end space-x-1.5">
-                            <button
-                              onClick={() => setSelectedEditService(srv)}
-                              className="px-2.5 py-1.5 rounded-lg bg-[#003523] text-white font-bold"
-                            >
-                              Edit Pricing
-                            </button>
-                            <button
-                              onClick={() => toggleServiceActive(srv.id)}
-                              className="px-2 py-1 rounded-lg border border-[#c0c9c2] font-semibold"
-                            >
-                              {srv.active ? 'Disable' : 'Enable'}
-                            </button>
-                          </div>
+                            Clear search query
+                          </button>
                         </td>
                       </tr>
-                    ))}
+                    ) : (
+                      filteredAdminServices.map((srv) => (
+                        <tr key={srv.id} className="hover:bg-[#faf8ff]">
+                          <td className="p-3 font-extrabold text-[#131b2e]">{srv.name}</td>
+                          <td className="p-3 text-[#707973]">{srv.category} · {srv.subcategory}</td>
+                          <td className="p-3 font-bold text-[#003523]">{srv.price_type}</td>
+                          <td className="p-3 font-mono font-bold">
+                            {srv.price_type === 'QUOTE_REQUIRED' ? 'Request a Quote' : `₹${srv.base_price}`}
+                          </td>
+                          <td className="p-3 text-[#707973]">{srv.duration} · {srv.warranty}</td>
+                          <td className="p-3">
+                            <span
+                              className={`px-2 py-0.5 rounded text-[10px] font-bold ${
+                                srv.active ? 'bg-[#c0edd3] text-[#003523]' : 'bg-gray-200 text-gray-700'
+                              }`}
+                            >
+                              {srv.active ? 'Active' : 'Disabled'}
+                            </span>
+                          </td>
+                          <td className="p-3 text-right">
+                            <div className="flex items-center justify-end space-x-1.5">
+                              <button
+                                onClick={() => setSelectedEditService(srv)}
+                                className="px-2.5 py-1.5 rounded-lg bg-[#003523] text-white font-bold"
+                              >
+                                Edit Pricing
+                              </button>
+                              <button
+                                onClick={() => toggleServiceActive(srv.id)}
+                                className="px-2 py-1 rounded-lg border border-[#c0c9c2] font-semibold"
+                              >
+                                {srv.active ? 'Disable' : 'Enable'}
+                              </button>
+                              <button
+                                onClick={async () => {
+                                  if (window.confirm(`Are you sure you want to permanently delete "${srv.name}"? This will delete it directly from Supabase.`)) {
+                                    await deleteService(srv.id);
+                                  }
+                                }}
+                                className="p-1.5 rounded-lg border border-red-200 text-red-600 hover:bg-red-50 hover:border-red-400 transition-colors cursor-pointer"
+                                title="Permanently Delete Service from Supabase"
+                              >
+                                <Trash2 className="w-3.5 h-3.5" />
+                              </button>
+                            </div>
+                          </td>
+                        </tr>
+                      ))
+                    )}
                   </tbody>
                 </table>
               </div>
@@ -1993,54 +2086,105 @@ export const AdminPortal: React.FC = () => {
           {/* ======================================================== */}
           {activeAdminTab === 'packages' && (
             <div className="bg-white rounded-2xl border border-[#c0c9c2]/50 p-5 shadow-xs space-y-4">
-              <div>
-                <h2 className="text-base font-black text-[#131b2e] flex items-center space-x-2">
-                  <Package className="w-5 h-5 text-[#003523]" />
-                  <span>Care Packages & Multi-Unit Bundles ({packages.length})</span>
-                </h2>
-                <p className="text-xs text-[#707973]">
-                  Seasonal combos offering zero doorstep visit fees and bulk household discounts.
-                </p>
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                <div>
+                  <h2 className="text-base font-black text-[#131b2e] flex items-center space-x-2">
+                    <Package className="w-5 h-5 text-[#003523]" />
+                    <span>Care Packages & Multi-Unit Bundles ({filteredAdminPackages.length}{adminPackageSearch ? ` of ${packages.length}` : ''})</span>
+                  </h2>
+                  <p className="text-xs text-[#707973]">
+                    Seasonal combos offering zero doorstep visit fees and bulk household discounts.
+                  </p>
+                </div>
               </div>
 
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                {packages.map((pkg) => (
-                  <div
-                    key={pkg.id}
-                    className="p-4 rounded-xl border border-[#fe932c]/50 bg-white shadow-xs space-y-2 text-xs flex flex-col justify-between"
+              {/* Fast Search Query & Instant Deletion Bar */}
+              <div className="relative flex items-center">
+                <Search className="w-4 h-4 text-[#707973] absolute left-3.5 pointer-events-none" />
+                <input
+                  type="text"
+                  value={adminPackageSearch}
+                  onChange={(e) => setAdminPackageSearch(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Escape') setAdminPackageSearch('');
+                  }}
+                  placeholder="Fast search packages by bundle name, category, or features... (Press Esc to clear)"
+                  className="w-full pl-9 pr-9 py-2.5 bg-[#faf8ff] border border-[#c0c9c2]/60 rounded-xl text-xs font-medium text-[#131b2e] placeholder-[#707973] focus:outline-none focus:ring-2 focus:ring-[#003523]/20 focus:border-[#003523] transition-all"
+                />
+                {adminPackageSearch && (
+                  <button
+                    onClick={() => setAdminPackageSearch('')}
+                    title="Clear search query (Esc)"
+                    className="absolute right-2.5 p-1 rounded-full text-[#707973] hover:text-[#131b2e] hover:bg-[#e2e8e0] transition-colors cursor-pointer"
                   >
-                    <div>
-                      <div className="flex justify-between items-start">
-                        <span className="font-black text-sm text-[#131b2e]">{pkg.name}</span>
-                        <span className="text-[10px] font-bold text-[#904d00] bg-[#ffdcc3] px-1.5 py-0.2 rounded">
-                          PACKAGE
-                        </span>
-                      </div>
-                      <p className="text-[#404943] mt-1">{pkg.description}</p>
-                      <div className="text-[#003523] font-bold mt-2">{pkg.savings}</div>
-
-                      <ul className="mt-2 space-y-1 text-[#707973] text-[11px]">
-                        {pkg.included.map((inc, i) => (
-                          <li key={i} className="flex items-center space-x-1">
-                            <Check className="w-3 h-3 text-[#003523]" />
-                            <span>{inc}</span>
-                          </li>
-                        ))}
-                      </ul>
-                    </div>
-
-                    <div className="pt-3 border-t border-[#c0c9c2]/40 flex justify-between items-center mt-3">
-                      <div>
-                        <span className="text-lg font-black text-[#003523]">₹{pkg.price}</span>
-                        <span className="text-xs text-[#707973] line-through ml-1">₹{pkg.originalPrice}</span>
-                      </div>
-                      <span className="text-[10px] font-bold text-[#003523]">
-                        {pkg.active ? 'Live on Store' : 'Inactive'}
-                      </span>
-                    </div>
-                  </div>
-                ))}
+                    <X className="w-3.5 h-3.5" />
+                  </button>
+                )}
               </div>
+
+              {filteredAdminPackages.length === 0 ? (
+                <div className="p-8 text-center text-xs text-[#707973] bg-[#faf8ff] rounded-xl border border-[#c0c9c2]/40">
+                  No packages found matching &ldquo;<span className="font-bold text-[#131b2e]">{adminPackageSearch}</span>&rdquo;.
+                  <button
+                    onClick={() => setAdminPackageSearch('')}
+                    className="ml-2 font-bold text-[#003523] underline cursor-pointer"
+                  >
+                    Clear search query
+                  </button>
+                </div>
+              ) : (
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                  {filteredAdminPackages.map((pkg) => (
+                    <div
+                      key={pkg.id}
+                      className="p-4 rounded-xl border border-[#fe932c]/50 bg-white shadow-xs space-y-2 text-xs flex flex-col justify-between"
+                    >
+                      <div>
+                        <div className="flex justify-between items-start">
+                          <span className="font-black text-sm text-[#131b2e]">{pkg.name}</span>
+                          <span className="text-[10px] font-bold text-[#904d00] bg-[#ffdcc3] px-1.5 py-0.2 rounded">
+                            PACKAGE
+                          </span>
+                        </div>
+                        <p className="text-[#404943] mt-1">{pkg.description}</p>
+                        <div className="text-[#003523] font-bold mt-2">{pkg.savings}</div>
+
+                        <ul className="mt-2 space-y-1 text-[#707973] text-[11px]">
+                          {pkg.included.map((inc, i) => (
+                            <li key={i} className="flex items-center space-x-1">
+                              <Check className="w-3 h-3 text-[#003523]" />
+                              <span>{inc}</span>
+                            </li>
+                          ))}
+                        </ul>
+                      </div>
+
+                      <div className="pt-3 border-t border-[#c0c9c2]/40 flex justify-between items-center mt-3">
+                        <div>
+                          <span className="text-lg font-black text-[#003523]">₹{pkg.price}</span>
+                          <span className="text-xs text-[#707973] line-through ml-1">₹{pkg.originalPrice}</span>
+                        </div>
+                        <div className="flex items-center space-x-2">
+                          <span className="text-[10px] font-bold text-[#003523]">
+                            {pkg.active ? 'Live on Store' : 'Inactive'}
+                          </span>
+                          <button
+                            onClick={async () => {
+                              if (window.confirm(`Are you sure you want to permanently delete package "${pkg.name}"? This will delete it directly from Supabase.`)) {
+                                await deletePackage(pkg.id);
+                              }
+                            }}
+                            className="p-1 rounded-lg border border-red-200 text-red-600 hover:bg-red-50 hover:border-red-400 transition-colors cursor-pointer"
+                            title="Permanently Delete Package from Supabase"
+                          >
+                            <Trash2 className="w-3 h-3" />
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
           )}
 
@@ -2098,6 +2242,30 @@ export const AdminPortal: React.FC = () => {
 
               {pricingSubTab === 'catalog' ? (
                 <div className="bg-white rounded-2xl border border-[#c0c9c2]/50 p-5 shadow-xs space-y-4">
+                  {/* Fast Search Query & Instant Deletion Bar */}
+                  <div className="relative flex items-center">
+                    <Search className="w-4 h-4 text-[#707973] absolute left-3.5 pointer-events-none" />
+                    <input
+                      type="text"
+                      value={pricingSearchQuery}
+                      onChange={(e) => setPricingSearchQuery(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Escape') setPricingSearchQuery('');
+                      }}
+                      placeholder="Fast search pricing catalog by service, category or subcategory... (Press Esc to clear)"
+                      className="w-full pl-9 pr-9 py-2.5 bg-[#faf8ff] border border-[#c0c9c2]/60 rounded-xl text-xs font-medium text-[#131b2e] placeholder-[#707973] focus:outline-none focus:ring-2 focus:ring-[#003523]/20 focus:border-[#003523] transition-all"
+                    />
+                    {pricingSearchQuery && (
+                      <button
+                        onClick={() => setPricingSearchQuery('')}
+                        title="Clear search query (Esc)"
+                        className="absolute right-2.5 p-1 rounded-full text-[#707973] hover:text-[#131b2e] hover:bg-[#e2e8e0] transition-colors cursor-pointer"
+                      >
+                        <X className="w-3.5 h-3.5" />
+                      </button>
+                    )}
+                  </div>
+
                   <div className="overflow-x-auto">
                     <table className="w-full text-left border-collapse text-xs">
                       <thead>
@@ -2113,27 +2281,41 @@ export const AdminPortal: React.FC = () => {
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-[#c0c9c2]/30">
-                        {services.map((srv) => (
-                          <tr key={srv.id} className="hover:bg-[#faf8ff]">
-                            <td className="p-3 font-extrabold text-[#131b2e]">{srv.name}</td>
-                            <td className="p-3 font-bold text-[#003523]">{srv.price_type}</td>
-                            <td className="p-3 font-mono font-bold">
-                              {srv.price_type === 'QUOTE_REQUIRED' ? 'Request a Quote' : `₹${srv.base_price}`}
-                            </td>
-                            <td className="p-3 text-[#707973]">₹{srv.visit_fee}</td>
-                            <td className="p-3 text-[#707973]">{srv.tax}% GST</td>
-                            <td className="p-3 text-[#707973]">{srv.warranty}</td>
-                            <td className="p-3 font-mono text-[11px] text-[#707973]">{srv.effective_from}</td>
-                            <td className="p-3 text-right">
+                        {filteredPricingServices.length === 0 ? (
+                          <tr>
+                            <td colSpan={8} className="p-8 text-center text-xs text-[#707973]">
+                              No services found matching &ldquo;<span className="font-bold text-[#131b2e]">{pricingSearchQuery}</span>&rdquo;.
                               <button
-                                onClick={() => setSelectedEditService(srv)}
-                                className="px-3 py-1.5 rounded-lg bg-[#003523] text-white font-bold text-xs"
+                                onClick={() => setPricingSearchQuery('')}
+                                className="ml-2 font-bold text-[#003523] underline cursor-pointer"
                               >
-                                Edit Pricing
+                                Clear search query
                               </button>
                             </td>
                           </tr>
-                        ))}
+                        ) : (
+                          filteredPricingServices.map((srv) => (
+                            <tr key={srv.id} className="hover:bg-[#faf8ff]">
+                              <td className="p-3 font-extrabold text-[#131b2e]">{srv.name}</td>
+                              <td className="p-3 font-bold text-[#003523]">{srv.price_type}</td>
+                              <td className="p-3 font-mono font-bold">
+                                {srv.price_type === 'QUOTE_REQUIRED' ? 'Request a Quote' : `₹${srv.base_price}`}
+                              </td>
+                              <td className="p-3 text-[#707973]">₹{srv.visit_fee}</td>
+                              <td className="p-3 text-[#707973]">{srv.tax}% GST</td>
+                              <td className="p-3 text-[#707973]">{srv.warranty}</td>
+                              <td className="p-3 font-mono text-[11px] text-[#707973]">{srv.effective_from}</td>
+                              <td className="p-3 text-right">
+                                <button
+                                  onClick={() => setSelectedEditService(srv)}
+                                  className="px-3 py-1.5 rounded-lg bg-[#003523] text-white font-bold text-xs"
+                                >
+                                  Edit Pricing
+                                </button>
+                              </td>
+                            </tr>
+                          ))
+                        )}
                       </tbody>
                     </table>
                   </div>
