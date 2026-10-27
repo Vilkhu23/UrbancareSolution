@@ -2,6 +2,7 @@ import React, { useState, useMemo } from 'react';
 import { useApp } from '../context/AppContext';
 import { SERVICE_CATEGORIES, SERVICE_AVAILABLE_ZONES } from '../data/initialData';
 import { CustomerOtpDisplay } from '../components/customer/CustomerOtpDisplay';
+import { Hero3DScene } from '../components/home/Hero3DScene';
 import {
   Search,
   Wrench,
@@ -306,30 +307,9 @@ export const HomePage: React.FC = () => {
                 </p>
               </div>
 
-              {/* Mobile Hero Illustration Banner (Compact 16:9 responsive frame, preserving all 3 artisans) */}
-              <div className="lg:hidden relative rounded-2xl overflow-hidden border border-emerald-200/80 shadow-md bg-gradient-to-tr from-emerald-50 via-white to-amber-50/40 my-2 sm:my-3 aspect-[16/9] max-h-[175px] sm:max-h-[220px] w-full hero-illustration-float">
-                <img
-                  src="/hero-illustration.jpg"
-                  alt="UrbanCare verified local technicians - certified Sikh artisan with turban, electricians, and plumbers serving Kharar and Mohali, Punjab"
-                  className="w-full h-full object-cover object-[center_15%] select-none"
-                  width={1200}
-                  height={896}
-                  loading="eager"
-                  decoding="async"
-                />
-                {/* Mobile Micro Floating Badges (Sleek corner positioning, zero face obstruction) */}
-                <div className="absolute top-2 left-2 bg-white/95 backdrop-blur-md border border-emerald-200/90 text-[#0D3B2E] text-[9px] font-bold px-2 py-0.5 rounded-full shadow-2xs flex items-center space-x-1">
-                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse shrink-0" />
-                  <span>Verified Artisans</span>
-                </div>
-                <div className="absolute bottom-2 left-2 bg-white/95 backdrop-blur-md border border-gray-200/90 text-gray-800 text-[9px] font-semibold px-2 py-0.5 rounded-full shadow-2xs flex items-center space-x-1">
-                  <ShieldCheck className="w-2.5 h-2.5 text-[#0D3B2E] shrink-0" />
-                  <span>₹0 Advance</span>
-                </div>
-                <div className="absolute bottom-2 right-2 bg-[#0D3B2E]/95 backdrop-blur-md text-white text-[9px] font-bold px-2 py-0.5 rounded-full shadow-2xs flex items-center space-x-1">
-                  <Star className="w-2.5 h-2.5 fill-[#F79324] text-[#F79324] shrink-0" />
-                  <span>4.9 (500+ Jobs)</span>
-                </div>
+              {/* Mobile Hero 3D Animated Scene (Compact 16:9 responsive frame, preserving all 3 artisans) */}
+              <div className="lg:hidden my-2 sm:my-3">
+                <Hero3DScene variant="mobile" />
               </div>
 
               {/* Prominent Combined Location Selector & Search Field (Height 52px, 16px font to prevent iOS zoom) */}
@@ -516,35 +496,9 @@ export const HomePage: React.FC = () => {
               </div>
             </div>
 
-            {/* Right Column: Desktop/Tablet Illustrated Home-Services Hero Scene */}
+            {/* Right Column: Desktop/Tablet 3D Animated Hero Scene with Parallax */}
             <div className="hidden lg:block lg:col-span-5 relative">
-              <div className="relative rounded-3xl overflow-hidden border border-emerald-200/90 shadow-xl bg-gradient-to-tr from-emerald-50 via-white to-amber-50/40 aspect-[4/3] max-h-[440px] w-full hero-illustration-float">
-                <img
-                  src="/hero-illustration.jpg"
-                  alt="UrbanCare verified local technicians - certified Sikh artisan with turban, electricians, and plumbers serving Kharar and Mohali, Punjab"
-                  className="w-full h-full object-cover object-center select-none"
-                  width={1200}
-                  height={896}
-                  loading="eager"
-                  decoding="async"
-                />
-
-                {/* Floating interactive badges on illustration */}
-                <div className="absolute top-4 left-4 bg-white/95 backdrop-blur-md border border-emerald-200 text-[#0D3B2E] text-xs font-bold px-3 py-1.5 rounded-full shadow-md flex items-center space-x-2">
-                  <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
-                  <span>Verified Local Artisans</span>
-                </div>
-
-                <div className="absolute bottom-4 left-4 bg-white/95 backdrop-blur-md border border-gray-200 text-gray-800 text-xs font-semibold px-3 py-1.5 rounded-full shadow-md flex items-center space-x-1.5">
-                  <ShieldCheck className="w-3.5 h-3.5 text-[#0D3B2E]" />
-                  <span>₹0 Advance • 30-Day Warranty</span>
-                </div>
-
-                <div className="absolute bottom-4 right-4 bg-[#0D3B2E]/95 backdrop-blur-md text-white text-xs font-bold px-3 py-1.5 rounded-full shadow-md flex items-center space-x-1.5">
-                  <Star className="w-3.5 h-3.5 fill-[#F79324] text-[#F79324]" />
-                  <span>4.9 (500+ Local Reviews)</span>
-                </div>
-              </div>
+              <Hero3DScene variant="desktop" />
             </div>
           </div>
         </div>
