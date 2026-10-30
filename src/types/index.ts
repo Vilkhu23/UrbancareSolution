@@ -33,6 +33,8 @@ export type BookingStatus =
   | 'NEW'
   | 'UNDER REVIEW'
   | 'READY FOR ASSIGNMENT'
+  | 'Pending Assignment'
+  | 'Visit Scheduled'
   | 'ASSIGNED'
   | 'ACCEPTED'
   | 'SCHEDULED'
@@ -169,6 +171,20 @@ export interface ServiceRequestItem {
   isPackage?: boolean;
 }
 
+export interface ServiceLocation {
+  formattedAddress: string;
+  latitude: number;
+  longitude: number;
+  placeId?: string;
+  houseFlat?: string;
+  buildingSociety?: string;
+  street?: string;
+  locality: string;
+  city: string;
+  postalCode: string;
+  accessInstructions?: string;
+}
+
 export interface ServiceRequest {
   id: string;
   user_id?: string;
@@ -178,6 +194,10 @@ export interface ServiceRequest {
   locality: string;
   address: string;
   landmark?: string;
+  location?: ServiceLocation;
+  latitude?: number;
+  longitude?: number;
+  placeId?: string;
   requestType: 'STANDARD_SERVICE' | 'CUSTOM_REQUIREMENT' | 'HOME_PROJECT';
   items: ServiceRequestItem[];
   subtotal: number;
@@ -223,6 +243,42 @@ export interface ServiceRequest {
   paymentMode?: 'CASH' | 'UPI' | 'ONLINE';
   customerRating?: number;
   customerFeedback?: string;
+  source?: 'Phone' | 'Website' | 'WhatsApp' | 'Referral';
+  bookingType?: 'QUICK_SERVICE' | 'PROJECT' | 'Quick Service' | 'Project';
+  vendor_id?: string;
+  vendorResponseStatus?: 'NOTIFIED' | 'ACCEPTED' | 'DECLINED';
+  created_by?: string;
+  customer_id?: string;
+  createdAtMs?: number;
+  whatsappNotifications?: {
+    customerSent: boolean;
+    customerSentAt?: string;
+    customerSentBy?: string;
+    vendorSent: boolean;
+    vendorSentAt?: string;
+    vendorSentBy?: string;
+  };
+}
+
+export interface CreatePhoneBookingInput {
+  customerId?: string;
+  customerName: string;
+  customerPhone: string;
+  customerEmail?: string;
+  locality: string;
+  address: string;
+  landmark?: string;
+  bookingType: 'QUICK_SERVICE' | 'PROJECT' | 'Quick Service' | 'Project';
+  categoryId: string;
+  subServiceId?: string;
+  serviceName: string;
+  problemDescription: string;
+  problemPhotos?: string[];
+  preferredDate: string;
+  preferredTimeSlot: string;
+  source?: 'Phone' | 'Website' | 'WhatsApp' | 'Referral';
+  internalNotes?: string;
+  createdBy?: string;
 }
 
 export interface CustomerRecord {
@@ -288,7 +344,6 @@ export interface OpsSettings {
   dispatchCenterName: string;
   emergencyHotline: string;
   supportEmail: string;
-  password?: string;
   defaultVisitFee: number;
   defaultGstPercent: number;
   requireSupervisorSignoff: boolean;
@@ -305,7 +360,6 @@ export interface Vendor {
   ownerName: string;
   mobile: string;
   email: string;
-  password?: string;
   categories: string[];
   serviceAreas: string[];
   experienceYears: number;

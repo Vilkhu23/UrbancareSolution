@@ -16,8 +16,10 @@ import {
   Droplets,
   Phone,
   Sparkles,
-  Hammer
+  Hammer,
+  MessageCircle
 } from 'lucide-react';
+import { getQuoteEnquiryWhatsAppUrl } from '../utils/whatsapp';
 
 export const ProjectsPage: React.FC = () => {
   const { setIsProjectModalOpen, projectRequests, currentLocality } = useApp();
@@ -136,11 +138,21 @@ export const ProjectsPage: React.FC = () => {
             <span>Request Free Site Visit & Quote</span>
           </button>
           <a
+            href={getQuoteEnquiryWhatsAppUrl('Renovation & Home Projects', currentLocality)}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="px-4 py-3 rounded-xl border border-[#25D366]/50 bg-[#25D366]/20 hover:bg-[#25D366]/30 text-white text-xs font-semibold transition-all flex items-center space-x-1.5 cursor-pointer"
+            title="Chat with Civil Supervisor on WhatsApp"
+          >
+            <MessageCircle className="w-4 h-4 text-[#25D366]" />
+            <span>WhatsApp Enquiry</span>
+          </a>
+          <a
             href="tel:+918284018909"
             className="px-4 py-3 rounded-xl border border-white/30 text-white text-xs font-semibold hover:bg-white/10 transition-all flex items-center space-x-1.5"
           >
             <Phone className="w-3.5 h-3.5 text-[#fe932c]" />
-            <span>Call Civil Supervisor: +91 82840 18909</span>
+            <span>Call: +91 82840 18909</span>
           </a>
         </div>
       </div>

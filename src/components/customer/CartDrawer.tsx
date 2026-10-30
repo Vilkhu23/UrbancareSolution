@@ -1,5 +1,7 @@
 import React, { useState } from 'react';
 import { useApp } from '../../context/AppContext';
+import { ServiceLocation } from '../../types';
+import { LocationPickerModal } from './LocationPickerModal';
 import {
   X,
   Plus,
@@ -14,7 +16,9 @@ import {
   CreditCard,
   IndianRupee,
   ArrowRight,
-  ShoppingBag
+  ShoppingBag,
+  Compass,
+  Edit3
 } from 'lucide-react';
 
 export const CartDrawer: React.FC = () => {
@@ -40,6 +44,8 @@ export const CartDrawer: React.FC = () => {
   const [preferredDate, setPreferredDate] = useState('Today');
   const [preferredTimeSlot, setPreferredTimeSlot] = useState('4:00 PM - 6:00 PM');
   const [notes, setNotes] = useState('');
+  const [isLocationPickerOpen, setIsLocationPickerOpen] = useState(false);
+  const [serviceLocation, setServiceLocation] = useState<ServiceLocation | null>(null);
 
   React.useEffect(() => {
     if (currentUser) {
@@ -60,6 +66,14 @@ export const CartDrawer: React.FC = () => {
     '6:00 PM - 8:00 PM'
   ];
 
+  const handleLocationConfirmed = (loc: ServiceLocation) => {
+    setServiceLocation(loc);
+    setAddress(loc.formattedAddress);
+    if (loc.accessInstructions) {
+      setLandmark(loc.accessInstructions);
+    }
+  };
+
   const handleCheckout = (e: React.FormEvent) => {
     e.preventDefault();
     if (cart.length === 0) return;
@@ -67,9 +81,10 @@ export const CartDrawer: React.FC = () => {
     const newBookingId = createBookingFromCart({
       customerName,
       customerPhone,
-      locality: currentLocality,
-      address,
-      landmark,
+      locality: serviceLocation?.locality || currentLocality,
+      address: serviceLocation?.formattedAddress || address,
+      landmark: serviceLocation?.accessInstructions || landmark,
+      location: serviceLocation || undefined,
       preferredDate,
       preferredTimeSlot,
       notes
@@ -213,11 +228,55 @@ export const CartDrawer: React.FC = () => {
                 </div>
               </div>
 
-              {/* Service Address in Kharar / Mohali */}
+              {/* Service Address in Kharar / Mohali with Google Maps Selector */}
               <div className="space-y-2">
                 <div className="flex items-center justify-between">
-                  <span className="text-[11px] text-[#626B73]">Doorstep Address in {currentLocality}</span>
+                  <span className="text-[11px] text-[#626B73]">
+                    Doorstep Address in {serviceLocation?.locality || currentLocality}
+                  </span>
                 </div>
+
+                {/* Google Maps Location Selector / Verified Badge */}
+                {serviceLocation ? (
+                  <div className="p-3 bg-[#E7F3EC] rounded-xl border border-[#0D3B2E]/30 space-y-1.5 shadow-xs">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center space-x-1.5 text-xs font-bold text-[#0D3B2E]">
+                        <CheckCircle2 className="w-3.5 h-3.5 text-[#0D3B2E]" />
+                        <span>Google Maps Location Verified</span>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => setIsLocationPickerOpen(true)}
+                        className="text-[11px] font-bold text-[#0D3B2E] underline hover:text-[#092B21] flex items-center space-x-1 cursor-pointer"
+                      >
+                        <Edit3 className="w-3 h-3" />
+                        <span>Change</span>
+                      </button>
+                    </div>
+                    <p className="text-xs text-[#202124] font-semibold leading-relaxed">
+                      {serviceLocation.formattedAddress}
+                    </p>
+                    <div className="flex items-center space-x-2 text-[10px] text-[#626B73]">
+                      <span>
+                        Sector: <strong className="text-[#0D3B2E]">{serviceLocation.locality}</strong>
+                      </span>
+                      <span>•</span>
+                      <span>
+                        Pin: {serviceLocation.latitude.toFixed(4)}, {serviceLocation.longitude.toFixed(4)}
+                      </span>
+                    </div>
+                  </div>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => setIsLocationPickerOpen(true)}
+                    className="w-full py-2.5 px-3 rounded-xl border-2 border-dashed border-[#0D3B2E]/40 bg-[#F4F9F6] hover:bg-[#E7F3EC] text-[#0D3B2E] text-xs font-bold flex items-center justify-center space-x-2 transition-all cursor-pointer shadow-xs active:scale-98"
+                  >
+                    <MapPin className="w-4 h-4 text-[#0D3B2E]" />
+                    <span>Select Service Location on Map</span>
+                  </button>
+                )}
+
                 <textarea
                   required
                   rows={2}
@@ -371,6 +430,15 @@ export const CartDrawer: React.FC = () => {
             </div>
           </div>
         )}
+
+        {/* Location Picker Modal */}
+        <LocationPickerModal
+          isOpen={isLocationPickerOpen}
+          onClose={() => setIsLocationPickerOpen(false)}
+          initialLocation={serviceLocation}
+          onConfirmLocation={handleLocationConfirmed}
+          currentLocality={currentLocality}
+        />
       </div>
     </div>
   );

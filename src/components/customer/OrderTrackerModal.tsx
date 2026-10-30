@@ -10,9 +10,11 @@ import {
   Star,
   MapPin,
   Calendar,
-  AlertCircle
+  AlertCircle,
+  MessageCircle
 } from 'lucide-react';
 import { CustomerOtpDisplay } from './CustomerOtpDisplay';
+import { getBookingEnquiryWhatsAppUrl } from '../../utils/whatsapp';
 
 export const OrderTrackerModal: React.FC = () => {
   const {
@@ -132,6 +134,21 @@ export const OrderTrackerModal: React.FC = () => {
                     <span>Call Artisan</span>
                   </a>
                   <a
+                    href={getBookingEnquiryWhatsAppUrl(
+                      order.id,
+                      order.items ? order.items.map((i) => i.serviceName) : [],
+                      order.status,
+                      order.locality
+                    )}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="px-2.5 py-1.5 rounded-lg border border-[#25D366]/40 bg-[#25D366]/10 hover:bg-[#25D366]/20 text-[#0D3B2E] text-xs font-semibold flex items-center space-x-1"
+                    title="Chat with Kharar Operations Desk on WhatsApp"
+                  >
+                    <MessageCircle className="w-3.5 h-3.5 text-[#25D366]" />
+                    <span>WhatsApp</span>
+                  </a>
+                  <a
                     href="tel:+918284018909"
                     className="px-2.5 py-1.5 rounded-lg border border-[#E2E6E4] text-[#202124] text-xs font-semibold hover:bg-white"
                     title="Call Kharar Operations Desk"
@@ -143,18 +160,35 @@ export const OrderTrackerModal: React.FC = () => {
             </div>
           ) : (
             <div className="p-3.5 rounded-xl bg-[#F7F8F7] border border-[#E2E6E4] text-xs text-[#626B73] flex items-center justify-between gap-2">
-              <div className="flex items-center space-x-2">
+              <div className="flex items-center space-x-2 min-w-0">
                 <ShieldAlert className="w-4 h-4 text-[#F79324] shrink-0" />
                 <span>
                   <strong>Operations Review in Progress:</strong> Our Kharar dispatcher is assigning the best artisan for your slot.
                 </span>
               </div>
-              <a
-                href="tel:+918284018909"
-                className="shrink-0 text-xs font-bold text-[#0D3B2E] underline"
-              >
-                Help Desk
-              </a>
+              <div className="flex items-center space-x-2 shrink-0">
+                <a
+                  href={getBookingEnquiryWhatsAppUrl(
+                    order.id,
+                    order.items ? order.items.map((i) => i.serviceName) : [],
+                    order.status,
+                    order.locality
+                  )}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="px-2.5 py-1 rounded-lg bg-[#25D366]/10 hover:bg-[#25D366]/20 border border-[#25D366]/40 text-[#0D3B2E] text-xs font-bold inline-flex items-center space-x-1"
+                  title="WhatsApp Operations Desk"
+                >
+                  <MessageCircle className="w-3.5 h-3.5 text-[#25D366]" />
+                  <span>WhatsApp</span>
+                </a>
+                <a
+                  href="tel:+918284018909"
+                  className="text-xs font-bold text-[#0D3B2E] underline"
+                >
+                  Call Desk
+                </a>
+              </div>
             </div>
           )}
 
@@ -320,7 +354,20 @@ export const OrderTrackerModal: React.FC = () => {
 
         {/* Footer */}
         <div className="p-3 bg-[#F7F8F7] border-t border-[#E2E6E4] flex justify-between items-center text-xs">
-          <span className="text-[#626B73]">Live state synchronized</span>
+          <a
+            href={getBookingEnquiryWhatsAppUrl(
+              order.id,
+              order.items ? order.items.map((i) => i.serviceName) : [],
+              order.status,
+              order.locality
+            )}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="text-[#0D3B2E] font-semibold flex items-center space-x-1.5 hover:underline"
+          >
+            <MessageCircle className="w-3.5 h-3.5 text-[#25D366]" />
+            <span>Need Help? Chat on WhatsApp</span>
+          </a>
           <button
             onClick={() => setActiveTrackingRequestId(null)}
             className="px-4 py-1.5 bg-[#0D3B2E] hover:bg-[#0A2E24] text-white rounded-lg font-bold cursor-pointer"

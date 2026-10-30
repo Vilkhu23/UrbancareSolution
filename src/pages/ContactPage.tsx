@@ -1,5 +1,6 @@
 import React from 'react';
-import { MapPin, Phone, Mail, Clock, MessageSquare } from 'lucide-react';
+import { MapPin, Phone, Mail, Clock, MessageSquare, MessageCircle } from 'lucide-react';
+import { getGeneralEnquiryWhatsAppUrl } from '../utils/whatsapp';
 
 export const ContactPage: React.FC = () => {
   return (
@@ -31,6 +32,21 @@ export const ContactPage: React.FC = () => {
             <div>
               <strong className="text-[#131b2e] block">Telephone Dispatch Line</strong>
               <span>+91 82840 18909 (Tricity Dispatch Line)</span>
+            </div>
+          </div>
+
+          <div className="flex items-start space-x-3 text-[#404943]">
+            <MessageCircle className="w-5 h-5 text-[#25D366] shrink-0 mt-0.5" />
+            <div>
+              <strong className="text-[#131b2e] block">WhatsApp Support & Enquiries</strong>
+              <a
+                href={getGeneralEnquiryWhatsAppUrl()}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-[#003523] font-bold hover:underline inline-flex items-center space-x-1"
+              >
+                <span>+91 82840 18909 (Chat with Dispatch Team)</span>
+              </a>
             </div>
           </div>
 

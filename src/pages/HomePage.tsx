@@ -3,6 +3,7 @@ import { useApp } from '../context/AppContext';
 import { SERVICE_CATEGORIES, SERVICE_AVAILABLE_ZONES } from '../data/initialData';
 import { CustomerOtpDisplay } from '../components/customer/CustomerOtpDisplay';
 import { Hero3DScene } from '../components/home/Hero3DScene';
+import { getGeneralEnquiryWhatsAppUrl } from '../utils/whatsapp';
 import {
   Search,
   Wrench,
@@ -462,7 +463,7 @@ export const HomePage: React.FC = () => {
                 </button>
 
                 <a
-                  href="https://wa.me/918284018909"
+                  href={getGeneralEnquiryWhatsAppUrl(currentLocality)}
                   target="_blank"
                   rel="noopener noreferrer"
                   id="hero-whatsapp-cta"

@@ -3,6 +3,7 @@ import { useApp } from '../context/AppContext';
 import { ServiceItem, ServicePackage } from '../types';
 import { SERVICE_CATEGORIES } from '../data/initialData';
 import { formatServicePricing } from '../utils/pricingEngine';
+import { getCustomRequirementWhatsAppUrl } from '../utils/whatsapp';
 import {
   Search,
   Filter,
@@ -45,7 +46,8 @@ import {
   Umbrella,
   Bug,
   Box,
-  Layers
+  Layers,
+  MessageCircle
 } from 'lucide-react';
 
 const CATEGORY_IMAGE_MAP: Record<string, string> = {
@@ -1068,6 +1070,16 @@ export const ServicesPage: React.FC = () => {
                 <PlusCircle className="w-4 h-4 text-[#F79324]" />
                 <span>Post Custom Requirement</span>
               </button>
+              <a
+                href={getCustomRequirementWhatsAppUrl(searchQuery, currentLocality)}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="w-full sm:w-auto px-4 py-2.5 rounded-xl bg-[#25D366]/10 hover:bg-[#25D366]/20 border border-[#25D366]/40 text-[#0D3B2E] text-xs font-bold transition-all shadow-xs cursor-pointer flex items-center justify-center space-x-1.5"
+                title="Chat with Kharar Desk on WhatsApp"
+              >
+                <MessageCircle className="w-4 h-4 text-[#25D366]" />
+                <span>WhatsApp Requirement</span>
+              </a>
             </div>
           </div>
         ) : (

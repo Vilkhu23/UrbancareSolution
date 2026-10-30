@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useApp } from '../../context/AppContext';
 import { SERVICE_AVAILABLE_ZONES } from '../../data/initialData';
+import { getWhatsAppUrl, getGeneralEnquiryWhatsAppUrl } from '../../utils/whatsapp';
 import {
   MapPin,
   Phone,
@@ -64,6 +65,25 @@ export const Navbar: React.FC = () => {
     employees,
     vendors
   } = useApp();
+
+  const navWhatsAppUrl = React.useMemo(() => {
+    if (currentPage === 'services') {
+      return getWhatsAppUrl(
+        `Hello UrbanCare Solution, I'm exploring services in ${currentLocality} and would like to ask a question.`
+      );
+    }
+    if (currentPage === 'projects') {
+      return getWhatsAppUrl(
+        `Hello UrbanCare Solution, I would like to enquire about home construction & civil projects in ${currentLocality}.`
+      );
+    }
+    if (currentPage === 'account') {
+      return getWhatsAppUrl(
+        `Hello UrbanCare Support, I have an inquiry regarding my bookings in ${currentLocality}.`
+      );
+    }
+    return getGeneralEnquiryWhatsAppUrl(currentLocality);
+  }, [currentPage, currentLocality]);
 
   const isLoggedIn = !!authProfile || !!currentUser || currentRole !== 'customer';
 
@@ -561,7 +581,7 @@ export const Navbar: React.FC = () => {
 
             {/* Direct Click-to-WhatsApp Button */}
             <a
-              href="https://wa.me/918284018909"
+              href={navWhatsAppUrl}
               target="_blank"
               rel="noopener noreferrer"
               className="w-9 h-9 sm:w-auto sm:h-auto p-2 sm:p-2.5 rounded-xl border border-emerald-200 bg-emerald-50/60 text-emerald-800 hover:bg-emerald-100 hover:border-emerald-400 flex items-center justify-center transition-all focus-visible:ring-2 focus-visible:ring-emerald-600 focus-visible:outline-none"
@@ -1027,7 +1047,7 @@ export const Navbar: React.FC = () => {
                   <span>+91 8284018909</span>
                 </a>
                 <a
-                  href="https://wa.me/918284018909"
+                  href={navWhatsAppUrl}
                   target="_blank"
                   rel="noopener noreferrer"
                   className="flex items-center space-x-1.5 font-semibold text-emerald-700"

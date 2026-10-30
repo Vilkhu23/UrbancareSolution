@@ -21,9 +21,22 @@ import {
   ExternalLink,
   ChevronRight,
   ShieldCheck,
-  Tag
+  Tag,
+  MessageCircle,
+  CheckSquare,
+  Square,
+  RotateCcw,
+  Filter,
+  Smartphone,
+  Check
 } from 'lucide-react';
-import { BookingStatus, ServiceRequest } from '../../types';
+import { BookingStatus, ServiceRequest, Vendor } from '../../types';
+import {
+  getVendorDispatchWhatsAppUrl,
+  getCustomerBookingConfirmationWhatsAppUrl
+} from '../../utils/whatsapp';
+import { getGoogleMapsWebUrl } from '../../utils/googleMaps';
+import { LOCALITIES, SERVICE_CATEGORIES } from '../../data/initialData';
 
 interface ServiceRequestDetailModalProps {
   requestId: string | null;
@@ -38,10 +51,16 @@ export const ServiceRequestDetailModal: React.FC<ServiceRequestDetailModalProps>
 }) => {
   const {
     requests,
+    vendors,
     updateRequestStatus,
+    assignRequest,
+    reassignRequest,
+    updateVendorResponseStatus,
+    markWhatsAppNotificationSent,
     addInternalNote,
     recordPayment,
-    showToast
+    showToast,
+    authProfile
   } = useApp();
 
   const [newNoteText, setNewNoteText] = useState('');
@@ -50,6 +69,14 @@ export const ServiceRequestDetailModal: React.FC<ServiceRequestDetailModalProps>
   const [isRecordingPayment, setIsRecordingPayment] = useState(false);
   const [statusUpdateNote, setStatusUpdateNote] = useState('');
   const [targetStatus, setTargetStatus] = useState<BookingStatus | ''>('');
+
+  // Vendor Assignment & Response Lifecycle States
+  const [showAssignPanel, setShowAssignPanel] = useState(false);
+  const [vendorCategoryFilter, setVendorCategoryFilter] = useState('ALL');
+  const [vendorAreaFilter, setVendorAreaFilter] = useState('ALL');
+  const [vendorAvailabilityFilter, setVendorAvailabilityFilter] = useState('ALL');
+  const [declineReason, setDeclineReason] = useState('');
+  const [showDeclineInput, setShowDeclineInput] = useState(false);
 
   if (!requestId) return null;
   const request = requests.find((r) => r.id === requestId);
@@ -98,8 +125,34 @@ export const ServiceRequestDetailModal: React.FC<ServiceRequestDetailModalProps>
     'COMPLETED': 'bg-emerald-100 text-emerald-800 border-emerald-300',
     'CUSTOMER CONFIRMED': 'bg-[#c0edd3] text-[#003523] border-[#003523]',
     'CANCELLED': 'bg-gray-100 text-gray-700 border-gray-300',
-    'DISPUTED': 'bg-red-100 text-red-800 border-red-300'
+    'DISPUTED': 'bg-red-100 text-red-800 border-red-300',
+    'Pending Assignment': 'bg-[#c0edd3] text-[#002114] border-[#003523]',
+    'Visit Scheduled': 'bg-indigo-100 text-indigo-800 border-indigo-300',
+    'REASSIGNMENT REQUIRED': 'bg-red-100 text-red-800 border-red-300'
   };
+
+  const filteredVendors = React.useMemo(() => {
+    return vendors.filter((v) => {
+      if (vendorCategoryFilter !== 'ALL') {
+        const matchesCat = v.categories.some((c) =>
+          c.toLowerCase().includes(vendorCategoryFilter.toLowerCase())
+        );
+        if (!matchesCat) return false;
+      }
+      if (vendorAreaFilter !== 'ALL') {
+        const matchesArea = v.serviceAreas.some((a) =>
+          a.toLowerCase().includes(vendorAreaFilter.toLowerCase())
+        );
+        if (!matchesArea) return false;
+      }
+      if (vendorAvailabilityFilter === 'AVAILABLE') {
+        if (v.status !== 'ACTIVE') return false;
+      }
+      return true;
+    });
+  }, [vendors, vendorCategoryFilter, vendorAreaFilter, vendorAvailabilityFilter]);
+
+  const opsUserName = authProfile?.full_name || 'Harman (Ops Lead)';
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-black/60 backdrop-blur-xs animate-fadeIn">
@@ -184,16 +237,476 @@ export const ServiceRequestDetailModal: React.FC<ServiceRequestDetailModalProps>
                   <span className="font-bold text-xs mt-1 block">Unassigned · Awaiting Operations Selection</span>
                 </div>
               )}
+
+              {/* Source Tag */}
+              {request.source && (
+                <div className="pl-4 border-l border-[#c0c9c2]/40">
+                  <span className="text-[10px] text-[#707973] uppercase font-bold block">
+                    Booking Source
+                  </span>
+                  <span className="inline-flex items-center space-x-1 px-2 py-0.5 mt-1 rounded text-[11px] font-bold bg-indigo-50 text-indigo-700 border border-indigo-200">
+                    <Smartphone className="w-3 h-3" />
+                    <span>{request.source}</span>
+                  </span>
+                </div>
+              )}
             </div>
 
             <div className="flex items-center space-x-2">
               <button
+                type="button"
+                onClick={() => setShowAssignPanel(!showAssignPanel)}
+                className="px-3 py-2 rounded-xl bg-[#003523] text-white hover:bg-[#144d37] font-bold text-xs flex items-center space-x-1.5 shadow-xs cursor-pointer"
+              >
+                <UserCheck className="w-3.5 h-3.5 text-[#fe932c]" />
+                <span>{request.assignedTo ? 'Manage Assignment' : 'Assign Vendor'}</span>
+              </button>
+              <button
+                type="button"
                 onClick={() => setIsUpdatingStatus(!isUpdatingStatus)}
-                className="px-3 py-2 rounded-xl border border-[#c0c9c2] hover:bg-[#eaedff] text-[#131b2e] font-bold text-xs flex items-center space-x-1.5"
+                className="px-3 py-2 rounded-xl border border-[#c0c9c2] hover:bg-[#eaedff] text-[#131b2e] font-bold text-xs flex items-center space-x-1.5 cursor-pointer"
               >
                 <RefreshCw className="w-3.5 h-3.5 text-[#003523]" />
                 <span>Change Status</span>
               </button>
+            </div>
+          </div>
+
+          {/* ======================================================== */}
+          {/* STEP 4: MANUAL VENDOR ASSIGNMENT & RESPONSE PANEL        */}
+          {/* ======================================================== */}
+          {(showAssignPanel || !request.assignedTo) && (
+            <div className="p-4 sm:p-5 rounded-2xl bg-white border-2 border-[#003523]/40 shadow-md space-y-4 animate-fadeIn">
+              <div className="flex items-center justify-between pb-3 border-b border-[#c0c9c2]/40">
+                <div className="flex items-center space-x-2">
+                  <UserCheck className="w-5 h-5 text-[#003523]" />
+                  <div>
+                    <h3 className="font-black text-sm text-[#131b2e]">
+                      Manual Vendor Assignment & Credit Verification
+                    </h3>
+                    <p className="text-[11px] text-[#707973]">
+                      Filter verified local vendors, check remaining credits, and dispatch job directly.
+                    </p>
+                  </div>
+                </div>
+                {request.assignedTo && (
+                  <button
+                    type="button"
+                    onClick={() => setShowAssignPanel(false)}
+                    className="p-1 rounded-lg text-gray-400 hover:text-black cursor-pointer"
+                  >
+                    <X className="w-4 h-4" />
+                  </button>
+                )}
+              </div>
+
+              {/* Vendor Active Assignment State & 1-Click Reassignment */}
+              {request.assignedTo && (
+                <div className="p-3.5 rounded-xl bg-[#c0edd3]/25 border border-[#003523]/40 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                  <div>
+                    <div className="flex items-center space-x-2">
+                      <span className="font-bold text-sm text-[#002114]">
+                        Currently Assigned: {request.assignedTo.name}
+                      </span>
+                      <span
+                        className={`text-[10px] font-black px-2 py-0.5 rounded-full uppercase ${
+                          request.vendorResponseStatus === 'ACCEPTED'
+                            ? 'bg-emerald-600 text-white'
+                            : request.vendorResponseStatus === 'DECLINED'
+                            ? 'bg-red-600 text-white'
+                            : 'bg-blue-600 text-white'
+                        }`}
+                      >
+                        Vendor Status: {request.vendorResponseStatus || 'NOTIFIED'}
+                      </span>
+                    </div>
+                    <div className="text-[11px] text-[#404943] mt-0.5">
+                      Phone: {request.assignedTo.phone} · Rating: {request.assignedTo.rating}
+                    </div>
+                  </div>
+
+                  {/* Actions for Vendor Response & 1-Click Reassignment */}
+                  <div className="flex flex-wrap items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => updateVendorResponseStatus(request.id, 'ACCEPTED')}
+                      className={`px-2.5 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                        request.vendorResponseStatus === 'ACCEPTED'
+                          ? 'bg-emerald-700 text-white'
+                          : 'bg-emerald-50 text-emerald-800 border border-emerald-300 hover:bg-emerald-100'
+                      }`}
+                    >
+                      ✓ Mark Accepted
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setShowDeclineInput(!showDeclineInput)}
+                      className={`px-2.5 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                        request.vendorResponseStatus === 'DECLINED'
+                          ? 'bg-red-700 text-white'
+                          : 'bg-red-50 text-red-700 border border-red-300 hover:bg-red-100'
+                      }`}
+                    >
+                      ✕ Mark Declined
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        reassignRequest(
+                          request.id,
+                          '',
+                          'VENDOR',
+                          'Supervisor 1-click reassignment',
+                          'Artisan reassignment required',
+                          opsUserName
+                        );
+                        setShowAssignPanel(true);
+                      }}
+                      className="px-3 py-1.5 rounded-lg bg-[#fe932c] hover:bg-[#e07f24] text-[#002114] text-xs font-bold flex items-center space-x-1 shadow-xs cursor-pointer"
+                    >
+                      <RotateCcw className="w-3.5 h-3.5" />
+                      <span>Reassign Vendor (1-Click)</span>
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              {/* Inline Decline Reason Input */}
+              {showDeclineInput && (
+                <div className="p-3 rounded-xl bg-red-50 border border-red-200 flex items-center gap-2">
+                  <input
+                    type="text"
+                    value={declineReason}
+                    onChange={(e) => setDeclineReason(e.target.value)}
+                    placeholder="Enter vendor decline reason (e.g. busy on another job, out of station)..."
+                    className="flex-1 p-2 rounded-lg border border-red-300 text-xs bg-white text-[#131b2e]"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => {
+                      updateVendorResponseStatus(
+                        request.id,
+                        'DECLINED',
+                        declineReason.trim() || 'Vendor declined assignment'
+                      );
+                      setShowDeclineInput(false);
+                      setDeclineReason('');
+                      setShowAssignPanel(true);
+                    }}
+                    className="px-3 py-2 rounded-lg bg-red-600 hover:bg-red-700 text-white font-bold text-xs"
+                  >
+                    Confirm Decline & Reassign
+                  </button>
+                </div>
+              )}
+
+              {/* Filters Toolbar */}
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 pt-1">
+                <div>
+                  <label className="block text-[11px] font-bold text-[#131b2e] mb-1">
+                    Filter by Trade Skill:
+                  </label>
+                  <select
+                    value={vendorCategoryFilter}
+                    onChange={(e) => setVendorCategoryFilter(e.target.value)}
+                    className="w-full p-2 rounded-xl border border-[#c0c9c2] text-xs font-semibold bg-white"
+                  >
+                    <option value="ALL">All Trade Skills</option>
+                    {SERVICE_CATEGORIES.map((c) => (
+                      <option key={c.id} value={c.name}>
+                        {c.name}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-[11px] font-bold text-[#131b2e] mb-1">
+                    Filter by Area / Locality:
+                  </label>
+                  <select
+                    value={vendorAreaFilter}
+                    onChange={(e) => setVendorAreaFilter(e.target.value)}
+                    className="w-full p-2 rounded-xl border border-[#c0c9c2] text-xs font-semibold bg-white"
+                  >
+                    <option value="ALL">All Tricity Areas</option>
+                    {LOCALITIES.map((loc) => (
+                      <option key={loc} value={loc}>
+                        {loc}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-[11px] font-bold text-[#131b2e] mb-1">
+                    Vendor Availability:
+                  </label>
+                  <select
+                    value={vendorAvailabilityFilter}
+                    onChange={(e) => setVendorAvailabilityFilter(e.target.value)}
+                    className="w-full p-2 rounded-xl border border-[#c0c9c2] text-xs font-semibold bg-white"
+                  >
+                    <option value="ALL">All Registered Vendors</option>
+                    <option value="AVAILABLE">Active / Available Only</option>
+                  </select>
+                </div>
+              </div>
+
+              {/* Vendors List */}
+              <div className="space-y-2 max-h-64 overflow-y-auto pr-1">
+                {filteredVendors.length === 0 ? (
+                  <div className="p-6 text-center text-[#707973] bg-gray-50 rounded-xl border border-dashed border-[#c0c9c2]">
+                    No vendors match current skill or area filter. Try selecting "All Trade Skills" or "All Areas".
+                  </div>
+                ) : (
+                  filteredVendors.map((vnd) => {
+                    const remainingCredits = vnd.plan?.remainingOpportunities ?? 0;
+                    const canAssign = remainingCredits > 0;
+                    const isCurrent = request.assignedTo?.id === vnd.id;
+
+                    return (
+                      <div
+                        key={vnd.id}
+                        className={`p-3.5 rounded-xl border flex flex-col sm:flex-row sm:items-center justify-between gap-3 transition-all ${
+                          !canAssign
+                            ? 'bg-gray-100/80 border-gray-300 opacity-60 cursor-not-allowed'
+                            : isCurrent
+                            ? 'bg-[#c0edd3]/30 border-[#003523] ring-1 ring-[#003523]'
+                            : 'bg-white border-[#c0c9c2]/50 hover:border-[#003523]'
+                        }`}
+                      >
+                        <div className="space-y-1">
+                          <div className="flex items-center space-x-2">
+                            <span className="font-bold text-sm text-[#131b2e]">
+                              {vnd.businessName}
+                            </span>
+                            <span className="text-[11px] text-[#707973]">({vnd.ownerName})</span>
+                            <span className="text-[10px] text-amber-700 bg-amber-50 px-1.5 py-0.2 rounded font-bold">
+                              ★ {vnd.rating}
+                            </span>
+                          </div>
+                          <div className="text-[11px] text-[#404943]">
+                            Phone: {vnd.mobile} · Skills: {vnd.categories.join(', ')}
+                          </div>
+                          <div className="text-[10px] text-[#707973]">
+                            Areas: {vnd.serviceAreas.join(', ')} · Active Jobs: {vnd.activeJobs}
+                          </div>
+                        </div>
+
+                        <div className="flex sm:flex-col items-center sm:items-end justify-between sm:justify-center gap-2 shrink-0">
+                          <div
+                            className={`text-xs font-black px-2 py-0.5 rounded ${
+                              canAssign
+                                ? 'bg-emerald-100 text-[#003523]'
+                                : 'bg-red-100 text-red-700'
+                            }`}
+                          >
+                            {remainingCredits} Credits Remaining
+                          </div>
+
+                          {canAssign ? (
+                            <button
+                              type="button"
+                              onClick={() => {
+                                assignRequest(
+                                  request.id,
+                                  vnd.id,
+                                  'VENDOR',
+                                  'Manual Ops assignment',
+                                  opsUserName,
+                                  'Manual vendor match'
+                                );
+                                updateVendorResponseStatus(request.id, 'NOTIFIED');
+                                setShowAssignPanel(false);
+                              }}
+                              className={`px-3 py-1.5 rounded-lg font-bold text-xs shadow-xs transition-all cursor-pointer ${
+                                isCurrent
+                                  ? 'bg-[#003523] text-white'
+                                  : 'bg-[#fe932c] hover:bg-[#e07f24] text-[#002114]'
+                              }`}
+                            >
+                              {isCurrent ? 'Assigned' : 'Assign Vendor'}
+                            </button>
+                          ) : (
+                            <button
+                              type="button"
+                              disabled
+                              className="px-3 py-1.5 rounded-lg bg-gray-200 text-gray-500 font-bold text-xs cursor-not-allowed"
+                            >
+                              0 Credits · Cannot Assign
+                            </button>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })
+                )}
+              </div>
+            </div>
+          )}
+
+          {/* ======================================================== */}
+          {/* STEP 5: WHATSAPP NOTIFICATIONS STATION (NO SMS)           */}
+          {/* ======================================================== */}
+          <div className="p-4 sm:p-5 rounded-2xl bg-white border border-[#c0c9c2]/50 shadow-xs space-y-3.5">
+            <div className="flex items-center justify-between pb-2 border-b border-[#c0c9c2]/30">
+              <div className="flex items-center space-x-2">
+                <MessageCircle className="w-5 h-5 text-[#25D366]" />
+                <h3 className="font-black text-sm text-[#131b2e]">
+                  WhatsApp Dispatch Notification Station (No SMS)
+                </h3>
+              </div>
+              <span className="text-[10px] text-[#707973] uppercase font-bold">
+                Direct wa.me Integration
+              </span>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              {/* Notification 1: Customer Dispatch WhatsApp */}
+              <div className="p-3.5 rounded-xl border border-[#c0c9c2]/40 bg-[#faf8ff] space-y-2.5 flex flex-col justify-between">
+                <div className="space-y-1">
+                  <div className="flex items-center justify-between">
+                    <span className="font-bold text-xs text-[#131b2e]">
+                      Customer Dispatch Update
+                    </span>
+                    <span className="text-[10px] font-mono text-[#003523]">
+                      {request.customerPhone}
+                    </span>
+                  </div>
+                  <p className="text-[11px] text-[#404943] leading-relaxed">
+                    Sends booking ID #{request.id}, confirmed time slot ({request.preferredTimeSlot}),
+                    address, and assigned technician contact to resident.
+                  </p>
+                </div>
+
+                <div className="pt-2 border-t border-[#c0c9c2]/30 flex flex-wrap items-center justify-between gap-2">
+                  <a
+                    href={getCustomerBookingConfirmationWhatsAppUrl(request.customerPhone, {
+                      bookingId: request.id,
+                      serviceName: request.items[0]?.serviceName || 'Service',
+                      customerName: request.customerName,
+                      vendorName: request.assignedTo?.name,
+                      vendorPhone: request.assignedTo?.phone,
+                      address: request.location?.formattedAddress || request.address,
+                      locality: request.location?.locality || request.locality,
+                      timeSlot: request.preferredTimeSlot,
+                      date: request.preferredDate,
+                      mapUrl:
+                        request.location?.latitude && request.location?.longitude
+                          ? getGoogleMapsWebUrl(request.location.latitude, request.location.longitude)
+                          : request.latitude && request.longitude
+                          ? getGoogleMapsWebUrl(request.latitude, request.longitude)
+                          : undefined
+                    })}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="px-3 py-1.5 rounded-lg bg-[#25D366] hover:bg-emerald-600 text-white font-bold text-xs flex items-center space-x-1.5 shadow-xs transition-colors"
+                  >
+                    <MessageCircle className="w-3.5 h-3.5 fill-white/20" />
+                    <span>Send on WhatsApp (Customer)</span>
+                  </a>
+
+                  {/* Message Sent Toggle */}
+                  <label className="flex items-center space-x-1.5 cursor-pointer text-xs font-semibold text-[#131b2e]">
+                    <input
+                      type="checkbox"
+                      checked={!!request.whatsappNotifications?.customerSent}
+                      onChange={() => markWhatsAppNotificationSent(request.id, 'CUSTOMER', opsUserName)}
+                      className="w-4 h-4 rounded text-[#003523] focus:ring-[#003523]"
+                    />
+                    <span>Message sent</span>
+                  </label>
+                </div>
+
+                {request.whatsappNotifications?.customerSent && (
+                  <div className="text-[10px] text-emerald-800 bg-emerald-50 px-2 py-1 rounded font-semibold flex items-center space-x-1">
+                    <Check className="w-3 h-3 text-emerald-600" />
+                    <span>
+                      Logged at {request.whatsappNotifications.customerSentAt} by{' '}
+                      {request.whatsappNotifications.customerSentBy}
+                    </span>
+                  </div>
+                )}
+              </div>
+
+              {/* Notification 2: Vendor Dispatch WhatsApp */}
+              <div className="p-3.5 rounded-xl border border-[#c0c9c2]/40 bg-[#faf8ff] space-y-2.5 flex flex-col justify-between">
+                <div className="space-y-1">
+                  <div className="flex items-center justify-between">
+                    <span className="font-bold text-xs text-[#131b2e]">
+                      Vendor Order Dispatch Alert
+                    </span>
+                    <span className="text-[10px] font-mono text-[#003523]">
+                      {request.assignedTo ? request.assignedTo.phone : 'Not Assigned'}
+                    </span>
+                  </div>
+                  <p className="text-[11px] text-[#404943] leading-relaxed">
+                    Sends job details, customer contact ({request.customerPhone}), address,
+                    time slot, and problem statement to technician.
+                  </p>
+                </div>
+
+                <div className="pt-2 border-t border-[#c0c9c2]/30 flex flex-wrap items-center justify-between gap-2">
+                  {request.assignedTo ? (
+                    <a
+                      href={getVendorDispatchWhatsAppUrl(request.assignedTo.phone, {
+                        bookingId: request.id,
+                        serviceName: request.items[0]?.serviceName || 'Service',
+                        customerName: request.customerName,
+                        customerPhone: request.customerPhone,
+                        address: request.location?.formattedAddress || request.address,
+                        locality: request.location?.locality || request.locality,
+                        timeSlot: request.preferredTimeSlot,
+                        date: request.preferredDate,
+                        notes: request.problemDescription || request.notes,
+                        mapUrl:
+                          request.location?.latitude && request.location?.longitude
+                            ? getGoogleMapsWebUrl(request.location.latitude, request.location.longitude)
+                            : request.latitude && request.longitude
+                            ? getGoogleMapsWebUrl(request.latitude, request.longitude)
+                            : undefined
+                      })}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="px-3 py-1.5 rounded-lg bg-[#25D366] hover:bg-emerald-600 text-white font-bold text-xs flex items-center space-x-1.5 shadow-xs transition-colors"
+                    >
+                      <MessageCircle className="w-3.5 h-3.5 fill-white/20" />
+                      <span>Send on WhatsApp (Vendor)</span>
+                    </a>
+                  ) : (
+                    <button
+                      type="button"
+                      disabled
+                      className="px-3 py-1.5 rounded-lg bg-gray-200 text-gray-500 font-bold text-xs cursor-not-allowed"
+                    >
+                      Assign Vendor First
+                    </button>
+                  )}
+
+                  {/* Message Sent Toggle */}
+                  <label className="flex items-center space-x-1.5 cursor-pointer text-xs font-semibold text-[#131b2e]">
+                    <input
+                      type="checkbox"
+                      disabled={!request.assignedTo}
+                      checked={!!request.whatsappNotifications?.vendorSent}
+                      onChange={() => markWhatsAppNotificationSent(request.id, 'VENDOR', opsUserName)}
+                      className="w-4 h-4 rounded text-[#003523] focus:ring-[#003523] disabled:opacity-50"
+                    />
+                    <span>Message sent</span>
+                  </label>
+                </div>
+
+                {request.whatsappNotifications?.vendorSent && (
+                  <div className="text-[10px] text-emerald-800 bg-emerald-50 px-2 py-1 rounded font-semibold flex items-center space-x-1">
+                    <Check className="w-3 h-3 text-emerald-600" />
+                    <span>
+                      Logged at {request.whatsappNotifications.vendorSentAt} by{' '}
+                      {request.whatsappNotifications.vendorSentBy}
+                    </span>
+                  </div>
+                )}
+              </div>
             </div>
           </div>
 
@@ -309,15 +822,53 @@ export const ServiceRequestDetailModal: React.FC<ServiceRequestDetailModalProps>
                   </div>
                 )}
 
-                <div className="pt-2 border-t border-[#c0c9c2]/20">
-                  <span className="text-[#707973] block mb-1">Service Address:</span>
-                  <div className="p-2.5 rounded-xl bg-[#faf8ff] border border-[#c0c9c2]/40 text-[#131b2e] font-semibold leading-relaxed">
+                <div className="pt-2 border-t border-[#c0c9c2]/20 space-y-2">
+                  <div className="flex items-center justify-between">
+                    <span className="text-[#707973] text-xs">Confirmed Service Address:</span>
+                    {((request.location?.latitude && request.location?.longitude) ||
+                      (request.latitude && request.longitude)) && (
+                      <a
+                        href={getGoogleMapsWebUrl(
+                          request.location?.latitude || request.latitude || 30.7499,
+                          request.location?.longitude || request.longitude || 76.6413,
+                          request.location?.formattedAddress || request.address
+                        )}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="inline-flex items-center space-x-1 text-[11px] font-bold text-[#003523] hover:underline bg-[#e7f3ec] px-2 py-0.5 rounded-md"
+                      >
+                        <span>View on Google Maps</span>
+                        <ExternalLink className="w-3 h-3" />
+                      </a>
+                    )}
+                  </div>
+                  <div className="p-2.5 rounded-xl bg-[#faf8ff] border border-[#c0c9c2]/40 text-[#131b2e] font-semibold leading-relaxed text-xs">
                     <MapPin className="w-3.5 h-3.5 inline mr-1 text-[#003523]" />
-                    {request.address}
-                    {request.landmark && (
-                      <span className="block text-[11px] text-[#707973] mt-1">
-                        Landmark: {request.landmark}
+                    {request.location?.formattedAddress || request.address}
+                    {request.location?.houseFlat && (
+                      <span className="block text-[11px] text-[#404943] mt-1 font-medium">
+                        Unit/Flat: {request.location.houseFlat}
+                        {request.location.buildingSociety ? `, ${request.location.buildingSociety}` : ''}
                       </span>
+                    )}
+                    {request.landmark && (
+                      <span className="block text-[11px] text-[#707973] mt-0.5 font-normal">
+                        Landmark / Instructions: {request.landmark}
+                      </span>
+                    )}
+                    {((request.location?.latitude && request.location?.longitude) ||
+                      (request.latitude && request.longitude)) && (
+                      <div className="mt-1.5 pt-1.5 border-t border-[#c0c9c2]/20 flex items-center justify-between text-[10px] text-[#707973] font-mono">
+                        <span>
+                          Coordinates: {(request.location?.latitude || request.latitude)?.toFixed(5)},{' '}
+                          {(request.location?.longitude || request.longitude)?.toFixed(5)}
+                        </span>
+                        {request.location?.postalCode && (
+                          <span className="font-sans font-bold text-[#003523]">
+                            PIN: {request.location.postalCode}
+                          </span>
+                        )}
+                      </div>
                     )}
                   </div>
                 </div>

@@ -1,6 +1,7 @@
 import React from 'react';
 import { useApp } from '../../context/AppContext';
 import { ShieldCheck, Phone, MapPin, Mail, ArrowRight, MessageCircle } from 'lucide-react';
+import { getGeneralEnquiryWhatsAppUrl } from '../../utils/whatsapp';
 
 /**
  * Redesigned UrbanCare Solution Footer:
@@ -16,7 +17,8 @@ export const Footer: React.FC = () => {
     openAuthModal,
     setIsDPDPNoticeOpen,
     setIsDPDPConsentManagerOpen,
-    setIsDPDPDataRightsOpen
+    setIsDPDPDataRightsOpen,
+    currentLocality
   } = useApp();
 
   return (
@@ -180,7 +182,7 @@ export const Footer: React.FC = () => {
             <ul className="space-y-2 text-emerald-100">
               <li>
                 <a
-                  href="https://wa.me/918284018909"
+                  href={getGeneralEnquiryWhatsAppUrl(currentLocality)}
                   target="_blank"
                   rel="noopener noreferrer"
                   className="hover:text-white transition-colors flex items-center space-x-1 text-emerald-300 font-semibold"

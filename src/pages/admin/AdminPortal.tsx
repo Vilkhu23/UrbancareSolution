@@ -12,6 +12,8 @@ import { EmployeeModal } from './EmployeeModal';
 import { DatabaseConfigModal } from './DatabaseConfigModal';
 import { CreateStaffModal } from './CreateStaffModal';
 import { VendorApprovalModal } from './VendorApprovalModal';
+import { PhoneBookingModal } from './PhoneBookingModal';
+import { AddPackageModal } from './AddPackageModal';
 import {
   Database,
   ShieldCheck,
@@ -79,7 +81,8 @@ import {
   Employee,
   CustomerRecord,
   ComplaintRecord,
-  PaymentRecord
+  PaymentRecord,
+  ServiceRequest
 } from '../../types';
 import { SERVICE_CATEGORIES } from '../../data/initialData';
 import { formatServicePricing } from '../../utils/pricingEngine';
@@ -120,6 +123,7 @@ export const AdminPortal: React.FC = () => {
     toggleServiceActive,
     addService,
     deleteService,
+    addPackage,
     deletePackage,
     projectRequests,
     updateProjectStatus,
@@ -148,12 +152,17 @@ export const AdminPortal: React.FC = () => {
   const [requestFilter, setRequestFilter] = useState<string>('ALL');
   const [requestSearch, setRequestSearch] = useState<string>('');
   const [requestLocalityFilter, setRequestLocalityFilter] = useState<string>('ALL');
+  const [requestSourceFilter, setRequestSourceFilter] = useState<'ALL' | 'Phone' | 'Website' | 'WhatsApp' | 'Referral'>('ALL');
+
+  // Phone Booking Modal State
+  const [isPhoneBookingModalOpen, setIsPhoneBookingModalOpen] = useState(false);
 
   // Modal states
   const [assigningRequestId, setAssigningRequestId] = useState<string | null>(null);
   const [ledgerVendorId, setLedgerVendorId] = useState<string | null>(null);
   const [selectedEditService, setSelectedEditService] = useState<ServiceItem | null>(null);
   const [isAddServiceModalOpen, setIsAddServiceModalOpen] = useState(false);
+  const [isAddPackageModalOpen, setIsAddPackageModalOpen] = useState(false);
   const [selectedDetailRequestId, setSelectedDetailRequestId] = useState<string | null>(null);
   const [isEmployeeModalOpen, setIsEmployeeModalOpen] = useState(false);
   const [editingEmployee, setEditingEmployee] = useState<Employee | null>(null);
@@ -260,6 +269,52 @@ export const AdminPortal: React.FC = () => {
   const totalRevenue = requests.reduce((acc, r) => acc + r.total, 0);
   const totalReconciledPayments = payments.reduce((acc, p) => acc + (Number(p?.amount) || 0), 0);
 
+  // Operations Live Counters (Phone booking, unassigned, awaiting vendor response)
+  const todayPhoneBookingsCount = useMemo(() => {
+    const todayStr = new Date().toISOString().slice(0, 10);
+    return requests.filter((r) => {
+      const isPhone = (r.source || 'Website') === 'Phone';
+      const createdStr = r.createdAt || (r.createdAtMs ? new Date(r.createdAtMs).toISOString().slice(0, 10) : '');
+      return isPhone && createdStr.startsWith(todayStr);
+    }).length;
+  }, [requests]);
+
+  const unassignedJobsCount = useMemo(() => {
+    return requests.filter(
+      (r) =>
+        !r.assignedTo &&
+        r.status !== 'COMPLETED' &&
+        r.status !== 'CUSTOMER CONFIRMED' &&
+        r.status !== 'CANCELLED'
+    ).length;
+  }, [requests]);
+
+  const awaitingVendorResponseCount = useMemo(() => {
+    return requests.filter(
+      (r) =>
+        r.vendorResponseStatus === 'NOTIFIED' ||
+        (r.assignedTo && !r.vendorResponseStatus && (r.status === 'ASSIGNED' || r.status === 'UNDER REVIEW'))
+    ).length;
+  }, [requests]);
+
+  const isBookingUnassignedOverdue = (req: ServiceRequest): boolean => {
+    if (req.assignedTo) return false;
+    if (req.status === 'COMPLETED' || req.status === 'CUSTOMER CONFIRMED' || req.status === 'CANCELLED') return false;
+    const now = Date.now();
+    let createdTime = req.createdAtMs;
+    if (!createdTime && req.createdAt) {
+      const parsed = Date.parse(req.createdAt);
+      if (!isNaN(parsed)) createdTime = parsed;
+    }
+    if (!createdTime) return false;
+    const diffMinutes = (now - createdTime) / (1000 * 60);
+    return diffMinutes >= 30;
+  };
+
+  const overdueUnassignedCount = useMemo(() => {
+    return requests.filter(isBookingUnassignedOverdue).length;
+  }, [requests]);
+
   // Filtered requests list
   const filteredRequests = useMemo(() => {
     return requests.filter((r) => {
@@ -267,11 +322,17 @@ export const AdminPortal: React.FC = () => {
         requestFilter === 'ALL'
           ? true
           : requestFilter === 'REASSIGNMENT_REQUIRED'
-          ? r.status === 'DISPUTED' || r.status === 'CUSTOMER NOT AVAILABLE' || r.status === 'VENDOR NOT AVAILABLE'
+          ? r.status === 'DISPUTED' ||
+            r.status === 'CUSTOMER NOT AVAILABLE' ||
+            r.status === 'VENDOR NOT AVAILABLE' ||
+            r.status === 'REASSIGNMENT REQUIRED'
           : r.status === requestFilter;
 
       const matchesLocality =
         requestLocalityFilter === 'ALL' ? true : r.locality.toLowerCase().includes(requestLocalityFilter.toLowerCase());
+
+      const matchesSource =
+        requestSourceFilter === 'ALL' ? true : (r.source || 'Website') === requestSourceFilter;
 
       const matchesSearch =
         !requestSearch.trim() ||
@@ -280,9 +341,9 @@ export const AdminPortal: React.FC = () => {
         r.customerPhone.includes(requestSearch) ||
         r.items.some((i) => i.serviceName.toLowerCase().includes(requestSearch.toLowerCase()));
 
-      return matchesStatus && matchesLocality && matchesSearch;
+      return matchesStatus && matchesLocality && matchesSource && matchesSearch;
     });
-  }, [requests, requestFilter, requestLocalityFilter, requestSearch]);
+  }, [requests, requestFilter, requestLocalityFilter, requestSourceFilter, requestSearch]);
 
   // Combined artisans list for the Assignment Board
   const combinedArtisans = useMemo(() => {
@@ -395,6 +456,14 @@ export const AdminPortal: React.FC = () => {
                 {authProfile?.full_name || 'Harman'} ({authProfile?.role === 'admin' ? 'Administrator' : 'Operations Lead'})
               </span>
             </div>
+            <button
+              onClick={() => setIsPhoneBookingModalOpen(true)}
+              className="px-3.5 py-1.5 rounded-xl bg-[#fe932c] hover:bg-[#e07e1e] text-black text-xs font-black shadow-xs flex items-center space-x-1.5 cursor-pointer transition-colors"
+              title="Create New Phone Booking on behalf of customer"
+            >
+              <Phone className="w-3.5 h-3.5 text-black" />
+              <span>+ New Phone Booking</span>
+            </button>
             <button
               onClick={() => {
                 setActiveAdminTab('assignment');
@@ -634,6 +703,94 @@ export const AdminPortal: React.FC = () => {
                   >
                     <span>Open Activation Queue</span>
                     <ArrowRight className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+              )}
+
+              {/* Compact Ops Quick Dispatch Bar */}
+              <div className="bg-white rounded-2xl border border-[#c0c9c2]/50 p-2.5 sm:px-4 sm:py-2 shadow-xs flex flex-wrap items-center justify-between gap-2.5">
+                <div className="flex items-center flex-wrap gap-2">
+                  <div className="flex items-center space-x-1.5 text-xs font-black text-[#003523] pr-2.5 border-r border-[#c0c9c2]/40">
+                    <Phone className="w-3.5 h-3.5 text-[#fe932c]" />
+                    <span>Phone Desk</span>
+                  </div>
+
+                  {/* Counter 1: Today's Phone Bookings */}
+                  <button
+                    onClick={() => {
+                      setRequestSourceFilter('Phone');
+                      setActiveAdminTab('requests');
+                    }}
+                    className="inline-flex items-center space-x-1.5 px-2.5 py-1 rounded-lg bg-blue-50 hover:bg-blue-100 border border-blue-200/80 text-xs transition-colors cursor-pointer"
+                    title="Click to view today's phone bookings"
+                  >
+                    <span className="text-[11px] font-semibold text-blue-800">Today's Phone:</span>
+                    <span className="font-black text-blue-900">{todayPhoneBookingsCount}</span>
+                  </button>
+
+                  {/* Counter 2: Unassigned Jobs */}
+                  <button
+                    onClick={() => {
+                      setRequestFilter('READY FOR ASSIGNMENT');
+                      setActiveAdminTab('requests');
+                    }}
+                    className={`inline-flex items-center space-x-1.5 px-2.5 py-1 rounded-lg border text-xs transition-colors cursor-pointer ${
+                      overdueUnassignedCount > 0
+                        ? 'bg-red-50 hover:bg-red-100 border-red-300 text-red-900'
+                        : 'bg-amber-50 hover:bg-amber-100 border-amber-200/80 text-amber-900'
+                    }`}
+                    title="Click to view unassigned jobs"
+                  >
+                    <span className="text-[11px] font-semibold">Unassigned:</span>
+                    <span className="font-black">{unassignedJobsCount}</span>
+                    {overdueUnassignedCount > 0 && (
+                      <span className="ml-1 px-1.5 py-0.2 rounded text-[9px] font-black bg-red-600 text-white animate-pulse">
+                        {overdueUnassignedCount} overdue &gt;30m
+                      </span>
+                    )}
+                  </button>
+
+                  {/* Counter 3: Awaiting Vendor Response */}
+                  <button
+                    onClick={() => {
+                      setRequestFilter('ASSIGNED');
+                      setActiveAdminTab('requests');
+                    }}
+                    className="inline-flex items-center space-x-1.5 px-2.5 py-1 rounded-lg bg-teal-50 hover:bg-teal-100 border border-teal-200/80 text-xs transition-colors cursor-pointer"
+                    title="Click to view jobs dispatched awaiting vendor response"
+                  >
+                    <span className="text-[11px] font-semibold text-teal-800">Awaiting Response:</span>
+                    <span className="font-black text-teal-900">{awaitingVendorResponseCount}</span>
+                  </button>
+                </div>
+
+                {/* Direct Action: + New Phone Booking */}
+                <button
+                  onClick={() => setIsPhoneBookingModalOpen(true)}
+                  className="px-3.5 py-1.5 rounded-xl bg-[#fe932c] hover:bg-[#e07e1e] text-black font-black text-xs shadow-xs flex items-center space-x-1.5 cursor-pointer transition-all shrink-0 hover:scale-[1.01]"
+                >
+                  <Phone className="w-3.5 h-3.5 text-black" />
+                  <span>+ New Phone Booking</span>
+                </button>
+              </div>
+
+              {/* Slim Overdue Alert (only if overdue unassigned bookings exist) */}
+              {overdueUnassignedCount > 0 && (
+                <div className="px-3 py-1.5 rounded-xl bg-red-50 border border-red-200 flex items-center justify-between gap-2 text-xs text-red-900">
+                  <div className="flex items-center space-x-2">
+                    <AlertTriangle className="w-3.5 h-3.5 text-red-600 shrink-0 animate-bounce" />
+                    <span>
+                      <strong>{overdueUnassignedCount} booking{overdueUnassignedCount > 1 ? 's' : ''}</strong> unassigned for &gt;30 mins!
+                    </span>
+                  </div>
+                  <button
+                    onClick={() => {
+                      setRequestFilter('ALL');
+                      setActiveAdminTab('requests');
+                    }}
+                    className="text-[11px] font-bold text-red-700 hover:underline cursor-pointer"
+                  >
+                    Resolve Now →
                   </button>
                 </div>
               )}
@@ -967,6 +1124,13 @@ export const AdminPortal: React.FC = () => {
 
                 <div className="flex items-center space-x-2">
                   <button
+                    onClick={() => setIsPhoneBookingModalOpen(true)}
+                    className="px-3.5 py-1.5 rounded-xl bg-[#fe932c] hover:bg-[#e07e1e] text-black font-black text-xs shadow-xs flex items-center space-x-1.5 cursor-pointer transition-colors"
+                  >
+                    <Phone className="w-3.5 h-3.5 text-black" />
+                    <span>+ New Phone Booking</span>
+                  </button>
+                  <button
                     onClick={() => setRequestFilter('ALL')}
                     className={`px-3 py-1.5 rounded-xl text-xs font-bold border ${
                       requestFilter === 'ALL'
@@ -990,7 +1154,7 @@ export const AdminPortal: React.FC = () => {
               </div>
 
               {/* Search & Filter Toolbar */}
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
                 <div className="relative">
                   <Search className="w-4 h-4 absolute left-3 top-2.5 text-[#707973]" />
                   <input
@@ -1009,6 +1173,8 @@ export const AdminPortal: React.FC = () => {
                 >
                   <option value="ALL">All Statuses</option>
                   <option value="NEW">NEW</option>
+                  <option value="Pending Assignment">Pending Assignment</option>
+                  <option value="Visit Scheduled">Visit Scheduled (Project)</option>
                   <option value="UNDER REVIEW">UNDER REVIEW</option>
                   <option value="READY FOR ASSIGNMENT">READY FOR ASSIGNMENT</option>
                   <option value="ASSIGNED">ASSIGNED</option>
@@ -1018,6 +1184,18 @@ export const AdminPortal: React.FC = () => {
                   <option value="CUSTOMER CONFIRMED">CUSTOMER CONFIRMED</option>
                   <option value="CANCELLED">CANCELLED</option>
                   <option value="REASSIGNMENT_REQUIRED">REASSIGNMENT REQUIRED</option>
+                </select>
+
+                <select
+                  value={requestSourceFilter}
+                  onChange={(e) => setRequestSourceFilter(e.target.value as any)}
+                  className="p-2 rounded-xl border border-[#c0c9c2] text-xs font-semibold bg-white"
+                >
+                  <option value="ALL">All Sources (Phone, Web, WA)</option>
+                  <option value="Phone">Source: Phone (Ops)</option>
+                  <option value="Website">Source: Website</option>
+                  <option value="WhatsApp">Source: WhatsApp</option>
+                  <option value="Referral">Source: Referral</option>
                 </select>
 
                 <select
@@ -1056,18 +1234,51 @@ export const AdminPortal: React.FC = () => {
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-[#c0c9c2]/30">
-                    {filteredRequests.map((req) => (
-                      <tr key={req.id} className="hover:bg-[#faf8ff] transition-colors">
-                        <td className="p-3">
-                          <button
-                            onClick={() => setSelectedDetailRequestId(req.id)}
-                            className="font-black text-[#003523] hover:underline flex items-center space-x-1"
-                          >
-                            <span>#{req.id}</span>
-                          </button>
-                          <div className="font-bold text-[#131b2e] mt-0.5">{req.customerName}</div>
-                          <div className="text-[11px] text-[#707973]">{req.customerPhone}</div>
-                        </td>
+                    {filteredRequests.map((req) => {
+                      const isOverdue = isBookingUnassignedOverdue(req);
+                      return (
+                        <tr
+                          key={req.id}
+                          className={`transition-colors ${
+                            isOverdue ? 'bg-red-50/70 hover:bg-red-50 border-l-4 border-l-red-500' : 'hover:bg-[#faf8ff]'
+                          }`}
+                        >
+                          <td className="p-3">
+                            <div className="flex items-center space-x-1.5 flex-wrap gap-y-1">
+                              <button
+                                onClick={() => setSelectedDetailRequestId(req.id)}
+                                className="font-black text-[#003523] hover:underline flex items-center space-x-1"
+                              >
+                                <span>#{req.id}</span>
+                              </button>
+                              <span
+                                className={`inline-flex items-center px-1.5 py-0.2 rounded text-[9px] font-black ${
+                                  (req.source || 'Website') === 'Phone'
+                                    ? 'bg-blue-100 text-blue-800 border border-blue-200'
+                                    : (req.source || 'Website') === 'WhatsApp'
+                                    ? 'bg-emerald-100 text-emerald-800 border border-emerald-200'
+                                    : (req.source || 'Website') === 'Referral'
+                                    ? 'bg-purple-100 text-purple-800 border border-purple-200'
+                                    : 'bg-gray-100 text-gray-700 border border-gray-200'
+                                }`}
+                              >
+                                {req.source || 'Website'}
+                              </span>
+                              {req.bookingType === 'Project' && (
+                                <span className="inline-flex items-center px-1.5 py-0.2 rounded text-[9px] font-black bg-purple-100 text-purple-800 border border-purple-200">
+                                  Project
+                                </span>
+                              )}
+                            </div>
+                            <div className="font-bold text-[#131b2e] mt-0.5">{req.customerName}</div>
+                            <div className="text-[11px] text-[#707973]">{req.customerPhone}</div>
+                            {isOverdue && (
+                              <div className="mt-1 inline-flex items-center space-x-1 text-[10px] font-black text-red-700 bg-red-100 px-1.5 py-0.5 rounded border border-red-300 animate-pulse">
+                                <AlertTriangle className="w-2.5 h-2.5 text-red-600" />
+                                <span>Unassigned &gt;30m</span>
+                              </div>
+                            )}
+                          </td>
 
                         <td className="p-3">
                           <div className="font-bold text-[#003523]">{req.locality}</div>
@@ -1151,7 +1362,8 @@ export const AdminPortal: React.FC = () => {
                           </div>
                         </td>
                       </tr>
-                    ))}
+                    );
+                  })}
                   </tbody>
                 </table>
               </div>
@@ -2096,6 +2308,13 @@ export const AdminPortal: React.FC = () => {
                     Seasonal combos offering zero doorstep visit fees and bulk household discounts.
                   </p>
                 </div>
+                <button
+                  onClick={() => setIsAddPackageModalOpen(true)}
+                  className="px-4 py-2 rounded-xl bg-[#003523] hover:bg-[#144d37] text-white text-xs font-bold shadow-xs flex items-center space-x-1.5 cursor-pointer shrink-0 transition-all active:scale-98"
+                >
+                  <Plus className="w-4 h-4 text-[#fe932c]" />
+                  <span>+ Add Package</span>
+                </button>
               </div>
 
               {/* Fast Search Query & Instant Deletion Bar */}
@@ -3148,6 +3367,27 @@ export const AdminPortal: React.FC = () => {
           onClose={() => {
             setIsApprovalModalOpen(false);
             setSelectedApprovalVendor(null);
+          }}
+        />
+      )}
+
+      {/* 13. Ops Phone Booking Modal */}
+      <PhoneBookingModal
+        isOpen={isPhoneBookingModalOpen}
+        onClose={() => setIsPhoneBookingModalOpen(false)}
+        onBookingCreated={(newRequestId) => {
+          setSelectedDetailRequestId(newRequestId);
+        }}
+      />
+
+      {/* 14. Add Care Package Modal */}
+      {isAddPackageModalOpen && (
+        <AddPackageModal
+          isOpen={isAddPackageModalOpen}
+          onClose={() => setIsAddPackageModalOpen(false)}
+          onSave={(newPkg) => {
+            addPackage(newPkg);
+            setIsAddPackageModalOpen(false);
           }}
         />
       )}

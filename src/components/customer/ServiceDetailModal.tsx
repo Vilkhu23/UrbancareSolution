@@ -2,6 +2,10 @@ import React, { useState } from 'react';
 import { useApp } from '../../context/AppContext';
 import { formatServicePricing } from '../../utils/pricingEngine';
 import {
+  getServiceEnquiryWhatsAppUrl,
+  getQuoteEnquiryWhatsAppUrl
+} from '../../utils/whatsapp';
+import {
   X,
   CheckCircle2,
   XCircle,
@@ -17,7 +21,8 @@ import {
   Sparkles,
   Layers,
   ArrowRight,
-  Tag
+  Tag,
+  MessageCircle
 } from 'lucide-react';
 
 export const ServiceDetailModal: React.FC = () => {
@@ -30,7 +35,8 @@ export const ServiceDetailModal: React.FC = () => {
     setIsCustomTaskModalOpen,
     showToast,
     currentUser,
-    setIsAuthModalOpen
+    setIsAuthModalOpen,
+    currentLocality
   } = useApp();
 
   const [openFaqIndex, setOpenFaqIndex] = useState<number | null>(0);
@@ -360,17 +366,37 @@ export const ServiceDetailModal: React.FC = () => {
         </div>
 
         {/* Footer Sticky Dock */}
-        <div className="p-4 border-t border-[#c0c9c2]/40 bg-[#faf8ff] flex items-center justify-between">
-          <div>
-            <span className="text-[10px] text-[#707973] uppercase font-bold block">
+        <div className="p-4 border-t border-[#c0c9c2]/40 bg-[#faf8ff] flex items-center justify-between gap-2">
+          <div className="min-w-0">
+            <span className="text-[10px] text-[#707973] uppercase font-bold block truncate">
               {pricing.label}
             </span>
-            <span className="text-xl font-black text-[#003523]">
+            <span className="text-xl font-black text-[#003523] block">
               {pricing.priceFormatted}
             </span>
           </div>
 
-          <div className="flex items-center space-x-2">
+          <div className="flex items-center space-x-2 shrink-0">
+            <a
+              href={
+                pricing.isQuoteRequired
+                  ? getQuoteEnquiryWhatsAppUrl(service.name, currentLocality)
+                  : getServiceEnquiryWhatsAppUrl(
+                      service.name,
+                      service.category,
+                      pricing.priceFormatted,
+                      currentLocality
+                    )
+              }
+              target="_blank"
+              rel="noopener noreferrer"
+              className="p-2.5 rounded-xl border border-[#25D366]/40 bg-[#25D366]/10 hover:bg-[#25D366]/20 text-[#003523] transition-all flex items-center justify-center cursor-pointer shrink-0"
+              title={`Ask question about ${service.name} on WhatsApp`}
+              aria-label={`Ask about ${service.name} on WhatsApp`}
+            >
+              <MessageCircle className="w-4 h-4 text-[#25D366]" />
+            </a>
+
             {pricing.isQuoteRequired ? (
               <button
                 onClick={handleRequestQuote}

@@ -93,32 +93,34 @@ export const BecomePartnerPage: React.FC = () => {
     }
 
     try {
-      await addVendor({
-        id: `vnd-${Date.now()}`,
-        businessName,
-        ownerName,
-        mobile: phoneVal.formatted,
-        email: email || `${ownerName.toLowerCase().replace(/\s+/g, '')}@gmail.com`,
-        password,
-        categories: [category],
-        serviceAreas: [currentLocality, 'Sector 104, Mohali', 'Sector 110, Mohali', 'Sector 94, Mohali'],
-        experienceYears: Number(experienceYears),
-        documentsVerified: false,
-        status: 'PENDING_VERIFICATION',
-        plan: {
-          name: selectedPlan.name,
-          price: selectedPlan.price,
-          totalOpportunities: selectedPlan.totalOpportunities,
-          usedOpportunities: 0,
-          remainingOpportunities: selectedPlan.totalOpportunities,
-          validityDays: selectedPlan.validityDays,
-          expiryDate: new Date(Date.now() + selectedPlan.validityDays * 24 * 60 * 60 * 1000).toISOString().split('T')[0]
+      await addVendor(
+        {
+          id: `vnd-${Date.now()}`,
+          businessName,
+          ownerName,
+          mobile: phoneVal.formatted,
+          email: email || `${ownerName.toLowerCase().replace(/\s+/g, '')}@gmail.com`,
+          categories: [category],
+          serviceAreas: [currentLocality, 'Sector 104, Mohali', 'Sector 110, Mohali', 'Sector 94, Mohali'],
+          experienceYears: Number(experienceYears),
+          documentsVerified: false,
+          status: 'PENDING_VERIFICATION',
+          plan: {
+            name: selectedPlan.name,
+            price: selectedPlan.price,
+            totalOpportunities: selectedPlan.totalOpportunities,
+            usedOpportunities: 0,
+            remainingOpportunities: selectedPlan.totalOpportunities,
+            validityDays: selectedPlan.validityDays,
+            expiryDate: new Date(Date.now() + selectedPlan.validityDays * 24 * 60 * 60 * 1000).toISOString().split('T')[0]
+          },
+          activeJobs: 0,
+          completedJobs: 0,
+          rating: 5.0,
+          createdAt: new Date().toISOString().split('T')[0]
         },
-        activeJobs: 0,
-        completedJobs: 0,
-        rating: 5.0,
-        createdAt: new Date().toISOString().split('T')[0]
-      });
+        password
+      );
 
       setSubmitted(true);
       showToast(`Partner application submitted! Queued for Operations Manager review & activation.`, 'success');

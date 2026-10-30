@@ -5,6 +5,11 @@ import { LOCALITIES } from '../data/initialData';
 import { validateIndianPhone } from '../utils/authValidation';
 import { checkPhoneAvailableViaRpc } from '../services/supabaseService';
 import {
+  getWhatsAppUrl,
+  getGeneralEnquiryWhatsAppUrl,
+  getBookingEnquiryWhatsAppUrl
+} from '../utils/whatsapp';
+import {
   MapPin,
   CalendarCheck,
   Home,
@@ -564,7 +569,16 @@ export const CustomerAccountPage: React.FC = () => {
 
             <div className="space-y-2.5">
               <a
-                href="https://wa.me/918284018909"
+                href={
+                  activeBookings.length > 0
+                    ? getBookingEnquiryWhatsAppUrl(
+                        activeBookings[0].id,
+                        activeBookings[0].items.map((i) => i.serviceName),
+                        activeBookings[0].status,
+                        activeBookings[0].locality || currentLocality
+                      )
+                    : getGeneralEnquiryWhatsAppUrl(currentLocality)
+                }
                 target="_blank"
                 rel="noopener noreferrer"
                 className="w-full p-3 rounded-2xl bg-[#25D366]/10 hover:bg-[#25D366]/20 border border-[#25D366]/30 text-[#0D3B2E] flex items-center justify-between transition-colors cursor-pointer"
@@ -1188,15 +1202,33 @@ export const CustomerAccountPage: React.FC = () => {
                       </span>
                     </div>
 
-                    <button
-                      type="button"
-                      onClick={() => setActiveTrackingRequestId(order.id)}
-                      className="px-4 py-2.5 rounded-xl bg-[#0D3B2E] hover:bg-[#0A2E24] text-white font-bold text-xs sm:text-sm inline-flex items-center space-x-1.5 transition-all shadow-xs active:scale-95 cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0D3B2E]"
-                      aria-label={`View details and track booking #${order.id}`}
-                    >
-                      <span>View details</span>
-                      <ChevronRight className="w-4 h-4" />
-                    </button>
+                    <div className="flex items-center space-x-2">
+                      <a
+                        href={getBookingEnquiryWhatsAppUrl(
+                          order.id,
+                          order.items.map((i) => i.serviceName),
+                          order.status,
+                          order.locality || currentLocality
+                        )}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="p-2.5 rounded-xl border border-[#25D366]/40 bg-[#25D366]/10 hover:bg-[#25D366]/20 text-[#0D3B2E] transition-all flex items-center justify-center cursor-pointer"
+                        title="Chat about this booking on WhatsApp"
+                        aria-label={`Inquire about booking #${order.id} on WhatsApp`}
+                      >
+                        <MessageCircle className="w-4 h-4 text-[#25D366]" />
+                      </a>
+
+                      <button
+                        type="button"
+                        onClick={() => setActiveTrackingRequestId(order.id)}
+                        className="px-4 py-2.5 rounded-xl bg-[#0D3B2E] hover:bg-[#0A2E24] text-white font-bold text-xs sm:text-sm inline-flex items-center space-x-1.5 transition-all shadow-xs active:scale-95 cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0D3B2E]"
+                        aria-label={`View details and track booking #${order.id}`}
+                      >
+                        <span>View details</span>
+                        <ChevronRight className="w-4 h-4" />
+                      </button>
+                    </div>
                   </div>
                 </div>
               ))

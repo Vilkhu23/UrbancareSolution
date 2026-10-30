@@ -7,8 +7,8 @@
 -- ==============================================================================
 
 -- 1. Operations Settings (System Default Configuration)
-INSERT INTO public.ops_settings (id, password, auto_assignment_enabled, emergency_contact, dispatch_coverage_radius_km)
-VALUES ('ops-config', 'OpsLead@2026', TRUE, '+91 98889 00122', 12.5)
+INSERT INTO public.ops_settings (id, auto_assignment_enabled, emergency_contact, dispatch_coverage_radius_km)
+VALUES ('ops-config', TRUE, '+91 98889 00122', 12.5)
 ON CONFLICT (id) DO NOTHING;
 
 -- 3. Synchronize Service Categories

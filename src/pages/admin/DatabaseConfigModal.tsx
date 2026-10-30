@@ -30,7 +30,7 @@ export const DatabaseConfigModal: React.FC<DatabaseConfigModalProps> = ({ isOpen
   };
 
   const tables = [
-    { name: 'ops_settings', purpose: 'Operations dispatch supervisor credentials, emergency hotline & radius' },
+    { name: 'ops_settings', purpose: 'Operations dispatch configuration, emergency hotline & service radius' },
     { name: 'customers', purpose: 'Resident accounts, phone authentication, address & booking history' },
     { name: 'employees', purpose: 'In-house technicians, trade skills, passwords & live availability' },
     { name: 'vendors', purpose: 'Trade partner contractors, approval status, category, passwords & quotas' },

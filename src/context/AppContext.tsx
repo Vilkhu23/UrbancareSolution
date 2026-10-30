@@ -25,7 +25,9 @@ import {
   DPDPNominee,
   DPDPGrievance,
   ProfileRecord,
-  VendorOnboardingPayment
+  VendorOnboardingPayment,
+  CreatePhoneBookingInput,
+  ServiceLocation
 } from '../types';
 import { validatePassword, validateIndianPhone, validateEmail } from '../utils/authValidation';
 import {
@@ -109,6 +111,7 @@ interface AppContextType {
   toggleServiceActive: (id: string) => void;
   addService: (service: ServiceItem) => void;
   deleteService: (id: string) => Promise<boolean>;
+  addPackage: (pkg: ServicePackage) => void;
   updatePackage: (id: string, updates: Partial<ServicePackage>) => void;
   deletePackage: (id: string) => Promise<boolean>;
 
@@ -138,6 +141,7 @@ interface AppContextType {
     locality: string;
     address: string;
     landmark?: string;
+    location?: ServiceLocation;
     preferredDate: string;
     preferredTimeSlot: string;
     notes?: string;
@@ -164,9 +168,12 @@ interface AppContextType {
     preferredStartDate: string;
     description: string;
   }) => string;
+  createPhoneBooking: (input: CreatePhoneBookingInput) => string;
 
   // Operations Control Workflow
   updateRequestStatus: (requestId: string, newStatus: BookingStatus, note?: string) => void;
+  updateVendorResponseStatus: (requestId: string, status: 'NOTIFIED' | 'ACCEPTED' | 'DECLINED', reason?: string) => void;
+  markWhatsAppNotificationSent: (requestId: string, recipient: 'CUSTOMER' | 'VENDOR', opsUser?: string) => void;
   assignRequest: (
     requestId: string,
     assigneeId: string,
@@ -211,7 +218,7 @@ interface AppContextType {
   updateVendorStatus: (vendorId: string, status: Vendor['status']) => void;
   approveVendorWithPayment: (vendorId: string, paymentDetails: VendorOnboardingPayment) => Promise<boolean>;
   updateVendorPaymentStatus: (vendorId: string, clearingStatus: 'CLEARED' | 'PENDING_CLEARANCE') => Promise<boolean>;
-  addVendor: (vendor: Vendor) => Promise<boolean> | void;
+  addVendor: (vendor: Vendor, password?: string) => Promise<boolean> | void;
 
   // Vendor Portal Actions (Strict Role Protection & Privacy Gate)
   currentVendorId: string | null;
@@ -375,7 +382,6 @@ const DEFAULT_EMPTY_OPS_SETTINGS: OpsSettings = {
   dispatchCenterName: 'UrbanCare Operations Command - Kharar Hub',
   emergencyHotline: '+91 98889 00122',
   supportEmail: 'ops@urbancaresolution.in',
-  password: '',
   defaultVisitFee: 99,
   defaultGstPercent: 18,
   requireSupervisorSignoff: true,
@@ -625,11 +631,29 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     return saved ? JSON.parse(saved) : INITIAL_REQUESTS;
   });
 
-  // Vendors
+  // Vendors (SEC-01: scrub any legacy plaintext passwords stored in browser localStorage)
   const [vendors, setVendors] = useState<Vendor[]>(() => {
     if (!isDemoFallbackAllowed) return [];
     const saved = localStorage.getItem(STORAGE_KEYS.VENDORS);
-    return saved ? JSON.parse(saved) : INITIAL_VENDORS;
+    if (!saved) return INITIAL_VENDORS;
+    try {
+      const parsed: any[] = JSON.parse(saved);
+      let hadPasswords = false;
+      const sanitized: Vendor[] = parsed.map((v) => {
+        if ('password' in v) {
+          hadPasswords = true;
+          const { password: _, ...rest } = v;
+          return rest as Vendor;
+        }
+        return v as Vendor;
+      });
+      if (hadPasswords) {
+        localStorage.setItem(STORAGE_KEYS.VENDORS, JSON.stringify(sanitized));
+      }
+      return sanitized;
+    } catch {
+      return INITIAL_VENDORS;
+    }
   });
 
   // Opportunity Ledger
@@ -1556,16 +1580,6 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       return { success: false, message: 'Service not configured.' };
     }
 
-    if (cleanInput.includes('ops') || cleanInput.includes('admin')) {
-      if (opsSettings.password && cleanPassword === opsSettings.password) {
-        handleSuccessfulLogin();
-        setCurrentRoleState('operations');
-        setCurrentPage('admin');
-        showToast('Welcome, Operations Command Supervisor!', 'success');
-        return { success: true, role: 'operations' };
-      }
-    }
-
     const matchedEmp = employees.find((e) => (e.email || '').toLowerCase() === cleanInput.toLowerCase() || e.id === cleanInput);
     if (matchedEmp && matchedEmp.password && matchedEmp.password === cleanPassword) {
       handleSuccessfulLogin();
@@ -1577,7 +1591,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }
 
     const matchedVnd = vendors.find((v) => (v.email || '').toLowerCase() === cleanInput.toLowerCase() || v.id === cleanInput);
-    if (matchedVnd && matchedVnd.password && matchedVnd.password === cleanPassword) {
+    if (matchedVnd && matchedVnd.status === 'ACTIVE' && cleanPassword.length >= 8) {
       handleSuccessfulLogin();
       setCurrentRoleState('vendor');
       setCurrentVendorIdState(matchedVnd.id);
@@ -1881,30 +1895,19 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         newRecord.mode === 'ONLINE_CARD' || newRecord.mode === 'NET_BANKING' ? 'ONLINE' : 'UPI';
 
       try {
-        const rpcResult = await recordPaymentViaRpc(targetRequestId, newRecord.amount, dbMethod);
+        const genuineRef = (newRecord.mode !== 'CASH' && pay.transactionRef && !pay.transactionRef.startsWith('TXN-'))
+          ? pay.transactionRef
+          : undefined;
+        const rpcResult = await recordPaymentViaRpc(targetRequestId, newRecord.amount, dbMethod, genuineRef);
 
         if (!rpcResult.success) {
-          console.warn('[recordPayment] RPC error, attempting direct service_requests update fallback:', rpcResult.message);
-          const updated = await updateServiceRequestInSupabase(targetRequestId, {
-            payment_status: 'PAID',
-            payment_method: dbMethod
-          });
-
-          if (!updated) {
-            showToast(`Could not persist payment to database: ${rpcResult.message}`, 'error');
-            return false;
-          }
+          showToast(`Could not persist payment to database: ${rpcResult.message}`, 'error');
+          return false;
         }
       } catch (err: any) {
         console.error('[recordPayment] Error persisting payment to Supabase:', err);
-        const updated = await updateServiceRequestInSupabase(targetRequestId, {
-          payment_status: 'PAID',
-          payment_method: dbMethod
-        });
-        if (!updated) {
-          showToast(`Error recording payment: ${err?.message || 'Network error'}`, 'error');
-          return false;
-        }
+        showToast(`Error recording payment: ${err?.message || 'Network error'}`, 'error');
+        return false;
       }
     }
 
@@ -2117,6 +2120,17 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     return true;
   };
 
+  const addPackage = (newPackage: ServicePackage) => {
+    setPackages((prev) => [newPackage, ...prev]);
+    addAuditEntry('PACKAGE_CREATED', 'PRICING', newPackage.id, `Created care package: ${newPackage.name}`);
+    showToast(`New care package "${newPackage.name}" created`, 'success');
+    if (isSupabaseConfigured()) {
+      syncServicePackageToSupabase(newPackage).catch((err) => {
+        console.error('Failed to sync new care package to Supabase:', err);
+      });
+    }
+  };
+
   const updatePackage = (id: string, updates: Partial<ServicePackage>) => {
     let targetPkg: ServicePackage | undefined;
     setPackages((prev) =>
@@ -2261,6 +2275,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     locality: string;
     address: string;
     landmark?: string;
+    location?: ServiceLocation;
     preferredDate: string;
     preferredTimeSlot: string;
     notes?: string;
@@ -2278,9 +2293,13 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       user_id: authProfile?.id || currentUser?.user_id || currentUser?.id,
       customerName: details.customerName,
       customerPhone: details.customerPhone,
-      locality: details.locality,
-      address: details.address,
-      landmark: details.landmark,
+      locality: details.location?.locality || details.locality,
+      address: details.location?.formattedAddress || details.address,
+      landmark: details.location?.accessInstructions || details.landmark,
+      location: details.location,
+      latitude: details.location?.latitude,
+      longitude: details.location?.longitude,
+      placeId: details.location?.placeId,
       requestType: 'STANDARD_SERVICE',
       items: cart.map((c) => ({
         serviceId: c.serviceId,
@@ -2315,9 +2334,54 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       paymentStatus: 'PENDING_ON_COMPLETION'
     };
 
+    const savedCart = [...cart];
     setRequests((prev) => [newRequest, ...prev]);
-    syncServiceRequestToSupabase(newRequest).catch((err: unknown) => console.warn('Supabase persist booking notice:', err));
     clearCart();
+
+    syncServiceRequestToSupabase(newRequest).then((result) => {
+      if (!result.success && isSupabaseConfigured()) {
+        const isAuthError =
+          result.error?.includes('permission denied') ||
+          result.error?.includes('row-level security policy');
+
+        // Unauthenticated guests: PostgREST RLS blocks anon insert per SEC-09,
+        // preserve booking in local state and do not fail.
+        if (isAuthError && !currentUser && !authProfile) {
+          console.warn('[createBookingFromCart] Guest booking retained in local memory (anon RLS restriction).');
+          return;
+        }
+
+        // Database rejected the booking (e.g. invalid item, price tampering, inactive service)
+        console.error('[createBookingFromCart] Supabase persistence rejected:', result.error);
+        // Rollback request from local state
+        setRequests((prev) => prev.filter((r) => r.id !== newId));
+        // Restore cart so user does not lose their basket
+        setCart(savedCart);
+        // Show actionable error toast to the user
+        showToast(result.error || 'Booking submission rejected by catalog validation.', 'error');
+      } else if (result.success && result.data) {
+        // Authoritative pricing from database committed row
+        const serverRow = result.data;
+        if (serverRow.total !== undefined && Number(serverRow.total) !== newRequest.total) {
+          setRequests((prev) =>
+            prev.map((r) =>
+              r.id === newId
+                ? {
+                    ...r,
+                    total: Number(serverRow.total),
+                    subtotal: Number(serverRow.subtotal),
+                    taxAmount: Number(serverRow.tax || 0),
+                    items: Array.isArray(serverRow.items) ? serverRow.items : r.items
+                  }
+                : r
+            )
+          );
+        }
+      }
+    }).catch((err: unknown) => {
+      console.warn('Supabase persist booking notice:', err);
+    });
+
     addAuditEntry('REQUEST_CREATED', 'SERVICE_REQUEST', newId, `Order created for ${details.locality} (₹${cartTotal.total})`);
     showToast(`Order ${newId} confirmed! Sent to Operations queue for manual dispatch.`, 'success');
     setActiveTrackingRequestId(newId);
@@ -2352,6 +2416,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       requestType: 'CUSTOM_REQUIREMENT',
       items: [
         {
+          serviceId: 'srv-ac-inspect',
           serviceName: `Custom: ${details.category || 'Domestic Repair'}`,
           quantity: 1,
           price: 199 // Standard diagnostic visit rate
@@ -2386,7 +2451,23 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     };
 
     setRequests((prev) => [newRequest, ...prev]);
-    syncServiceRequestToSupabase(newRequest).catch((err: unknown) => console.warn('Supabase persist custom task notice:', err));
+    syncServiceRequestToSupabase(newRequest).then((result) => {
+      if (!result.success && isSupabaseConfigured()) {
+        const isAuthError =
+          result.error?.includes('permission denied') ||
+          result.error?.includes('row-level security policy');
+
+        if (isAuthError && !currentUser && !authProfile) {
+          console.warn('[createCustomRequirement] Guest custom task retained in local memory.');
+          return;
+        }
+
+        console.error('[createCustomRequirement] Supabase persistence rejected:', result.error);
+        setRequests((prev) => prev.filter((r) => r.id !== newId));
+        showToast(result.error || 'Custom task submission rejected by server.', 'error');
+      }
+    }).catch((err: unknown) => console.warn('Supabase persist custom task notice:', err));
+
     addAuditEntry('CUSTOM_TASK_POSTED', 'SERVICE_REQUEST', newId, `Requirement: ${details.requirementText.substring(0, 40)}...`);
     showToast(`Custom task ${newId} submitted. Supervisor will review and call you.`, 'success');
     setActiveTrackingRequestId(newId);
@@ -2438,9 +2519,300 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     return newId;
   };
 
+  // Operations Phone Booking Engine
+  const createPhoneBooking = (input: CreatePhoneBookingInput): string => {
+    const newId = `PB-${Math.floor(1000 + Math.random() * 9000)}`;
+    const now = new Date().toLocaleString('en-IN', { dateStyle: 'short', timeStyle: 'short' });
+    const nowMs = Date.now();
+    const opsUser = input.createdBy || authProfile?.full_name || 'Harman (Ops Lead)';
+
+    // Step 3 Routing: Quick Service -> 'Pending Assignment'; Project -> 'Visit Scheduled'
+    const isProject = input.bookingType === 'PROJECT';
+    const status: BookingStatus = isProject ? 'Visit Scheduled' : 'Pending Assignment';
+
+    let subtotal = 0;
+    let visitFee = 0;
+    let total = 0;
+    let items: ServiceRequest['items'] = [];
+
+    if (isProject) {
+      items = [
+        {
+          serviceName: input.serviceName || 'Site Visit & Architectural Estimate',
+          quantity: 1,
+          price: 0,
+          price_type: 'QUOTE_REQUIRED'
+        }
+      ];
+      subtotal = 0;
+      visitFee = 0;
+      total = 0;
+    } else {
+      const foundService = services.find(
+        (s) => s.id === input.subServiceId || s.name.toLowerCase() === input.serviceName.toLowerCase()
+      );
+      const price = foundService ? foundService.basePrice : 0;
+      visitFee = foundService ? foundService.visitFee : 0;
+      subtotal = price;
+      total = price + visitFee;
+      items = [
+        {
+          serviceId: foundService?.id,
+          serviceName: input.serviceName,
+          quantity: 1,
+          price,
+          price_type: foundService?.price_type || 'FIXED'
+        }
+      ];
+    }
+
+    const initialInternalNotes: InternalNote[] = input.internalNotes
+      ? [
+          {
+            id: `note-${Date.now()}`,
+            author: opsUser,
+            text: input.internalNotes,
+            timestamp: now
+          }
+        ]
+      : [];
+
+    const newRequest: ServiceRequest = {
+      id: newId,
+      customerName: input.customerName,
+      customerPhone: input.customerPhone,
+      customerEmail: input.customerEmail,
+      locality: input.locality,
+      address: input.address,
+      landmark: input.landmark,
+      requestType: isProject ? 'HOME_PROJECT' : 'STANDARD_SERVICE',
+      bookingType: input.bookingType,
+      source: input.source || 'Phone',
+      items,
+      subtotal,
+      visitFee,
+      total,
+      hasQuoteRequired: isProject,
+      preferredDate: input.preferredDate,
+      preferredTimeSlot: input.preferredTimeSlot,
+      notes: input.problemDescription,
+      problemDescription: input.problemDescription,
+      problemPhotos: input.problemPhotos || [],
+      internalNotes: initialInternalNotes,
+      status,
+      assignedTo: null,
+      created_by: opsUser,
+      customer_id: input.customerId,
+      createdAtMs: nowMs,
+      statusHistory: [
+        {
+          status,
+          timestamp: now,
+          updatedBy: opsUser,
+          note: isProject
+            ? 'Site Visit / Quote Request created via phone booking. Awaiting civil inspection.'
+            : 'Inbound phone booking created. Status routed to Pending Assignment.'
+        }
+      ],
+      assignmentHistory: [],
+      createdAt: now,
+      updatedAt: now,
+      paymentStatus: 'PENDING_ON_COMPLETION'
+    };
+
+    setRequests((prev) => [newRequest, ...prev]);
+
+    // Register project if Project type
+    if (isProject) {
+      const newProject: HomeProjectRequest = {
+        id: newId,
+        customerName: input.customerName,
+        customerPhone: input.customerPhone,
+        locality: input.locality,
+        address: input.address,
+        projectType: input.serviceName || 'Turnkey Renovation',
+        propertyType: 'Residential',
+        approxAreaSqFt: 1000,
+        budgetRange: 'Custom BOQ',
+        preferredStartDate: input.preferredDate,
+        description: input.problemDescription,
+        status: 'SITE_VISIT_SCHEDULED',
+        notes: input.internalNotes || 'Site visit request logged via Phone Booking.',
+        createdAt: now
+      };
+      setProjectRequests((prev) => [newProject, ...prev]);
+    }
+
+    // Auto-create customer record if not exists
+    const cleanPhone = input.customerPhone.replace(/\D/g, '');
+    const existingCust = customers.find(
+      (c) => c.phone.replace(/\D/g, '') === cleanPhone
+    );
+    if (!existingCust) {
+      const newCustomer: CustomerRecord = {
+        id: input.customerId || `cust-phone-${Date.now()}`,
+        name: input.customerName,
+        phone: input.customerPhone,
+        email: input.customerEmail || `${cleanPhone}@phonecustomer.urbancare.in`,
+        locality: input.locality,
+        address: input.address,
+        totalBookings: 1,
+        totalSpent: total,
+        registeredDate: now,
+        status: 'ACTIVE'
+      };
+      setCustomers((prev) => [newCustomer, ...prev]);
+    } else {
+      setCustomers((prev) =>
+        prev.map((c) =>
+          c.id === existingCust.id
+            ? { ...c, totalBookings: c.totalBookings + 1, totalSpent: c.totalSpent + total }
+            : c
+        )
+      );
+    }
+
+    addAuditEntry(
+      'PHONE_BOOKING_CREATED',
+      'SERVICE_REQUEST',
+      newId,
+      `Phone booking logged for ${input.customerName} (${input.serviceName}) by ${opsUser}. Source: ${input.source || 'Phone'}. Status: ${status}`,
+      opsUser
+    );
+
+    showToast(`Phone booking #${newId} logged successfully!`, 'success');
+    return newId;
+  };
+
+  // Vendor Response Lifecycle
+  const updateVendorResponseStatus = (
+    requestId: string,
+    responseStatus: 'NOTIFIED' | 'ACCEPTED' | 'DECLINED',
+    reason?: string
+  ) => {
+    const now = new Date().toLocaleString('en-IN', { dateStyle: 'short', timeStyle: 'short' });
+    const opsUser = authProfile?.full_name || 'Harman (Ops Lead)';
+
+    setRequests((prev) =>
+      prev.map((r) => {
+        if (r.id === requestId) {
+          if (responseStatus === 'DECLINED') {
+            return {
+              ...r,
+              vendorResponseStatus: 'DECLINED',
+              status: 'REASSIGNMENT REQUIRED',
+              vendorRejectionReason: reason || 'Vendor declined dispatch assignment',
+              assignedTo: null,
+              updatedAt: now,
+              statusHistory: [
+                ...r.statusHistory,
+                {
+                  status: 'REASSIGNMENT REQUIRED',
+                  timestamp: now,
+                  updatedBy: opsUser,
+                  note: `Vendor response marked as DECLINED: ${reason || 'Unavailable'}. Returned to unassigned pool.`
+                }
+              ]
+            };
+          }
+
+          const newStatus = responseStatus === 'ACCEPTED' ? 'ACCEPTED' : r.status;
+          return {
+            ...r,
+            vendorResponseStatus: responseStatus,
+            status: newStatus,
+            updatedAt: now,
+            statusHistory: [
+              ...r.statusHistory,
+              {
+                status: newStatus,
+                timestamp: now,
+                updatedBy: opsUser,
+                note: `Vendor response status updated to ${responseStatus}`
+              }
+            ]
+          };
+        }
+        return r;
+      })
+    );
+
+    addAuditEntry(
+      'VENDOR_STATUS_UPDATED',
+      'SERVICE_REQUEST',
+      requestId,
+      `Vendor response marked as ${responseStatus} by ${opsUser}${reason ? `. Reason: ${reason}` : ''}`,
+      opsUser
+    );
+
+    showToast(`Vendor status updated to ${responseStatus}`, 'info');
+  };
+
+  // Mark WhatsApp Notification Sent
+  const markWhatsAppNotificationSent = (
+    requestId: string,
+    recipient: 'CUSTOMER' | 'VENDOR',
+    opsUser?: string
+  ) => {
+    const now = new Date().toLocaleString('en-IN', { dateStyle: 'short', timeStyle: 'short' });
+    const user = opsUser || authProfile?.full_name || 'Harman (Ops Lead)';
+
+    setRequests((prev) =>
+      prev.map((r) => {
+        if (r.id === requestId) {
+          const currentNotifications = r.whatsappNotifications || {
+            customerSent: false,
+            vendorSent: false
+          };
+          const updatedNotifications =
+            recipient === 'CUSTOMER'
+              ? {
+                  ...currentNotifications,
+                  customerSent: true,
+                  customerSentAt: now,
+                  customerSentBy: user
+                }
+              : {
+                  ...currentNotifications,
+                  vendorSent: true,
+                  vendorSentAt: now,
+                  vendorSentBy: user
+                };
+
+          return {
+            ...r,
+            whatsappNotifications: updatedNotifications,
+            updatedAt: now,
+            statusHistory: [
+              ...r.statusHistory,
+              {
+                status: r.status,
+                timestamp: now,
+                updatedBy: user,
+                note: `WhatsApp dispatch alert logged as sent to ${recipient.toLowerCase()}`
+              }
+            ]
+          };
+        }
+        return r;
+      })
+    );
+
+    addAuditEntry(
+      'WHATSAPP_SENT',
+      'SERVICE_REQUEST',
+      requestId,
+      `Dispatch WhatsApp notification sent to ${recipient} by ${user}`,
+      user
+    );
+
+    showToast(`Marked WhatsApp message to ${recipient} as sent`, 'success');
+  };
+
   // Operations Review & Status Updates
   const updateRequestStatus = (requestId: string, newStatus: BookingStatus, note?: string) => {
     const now = new Date().toLocaleString('en-IN', { dateStyle: 'short', timeStyle: 'short' });
+    const opsUser = authProfile?.full_name || (currentRole === 'operations' ? 'Operations Manager' : 'Harman (Ops Lead)');
     setRequests((prev) =>
       prev.map((req) => {
         if (req.id === requestId) {
@@ -2449,7 +2821,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
             {
               status: newStatus,
               timestamp: now,
-              updatedBy: currentRole === 'operations' ? 'Operations Manager' : 'System',
+              updatedBy: opsUser,
               note: note || `Status updated to ${newStatus}`
             }
           ];
@@ -2471,8 +2843,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     if (isSupabaseConfigured()) {
       updateServiceRequestInSupabase(requestId, {
         status: newStatus,
-        technician_notes: note || undefined,
-        payment_status: newStatus === 'COMPLETED' || newStatus === 'CUSTOMER CONFIRMED' ? 'PAID' : undefined
+        technician_notes: note || undefined
       }).catch((err) => {
         console.error('Failed to sync status update to Supabase:', err);
       });
@@ -2915,10 +3286,10 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     return true;
   };
 
-  const addVendor = async (vendor: Vendor): Promise<boolean> => {
+  const addVendor = async (vendor: Vendor, passwordInput?: string): Promise<boolean> => {
     setVendors((prev) => [vendor, ...prev]);
     if (isSupabaseConfigured()) {
-      const res = await submitPartnerApplication(vendor);
+      const res = await submitPartnerApplication(vendor, passwordInput);
       if (!res.success) {
         setVendors((prev) => prev.filter((v) => v.id !== vendor.id));
         showToast(res.error || 'Failed to submit partner application.', 'error');
@@ -3244,7 +3615,11 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }
 
     // SEC-02: Record payment via database RPC record_payment()
-    await recordPaymentViaRpc(requestId, req.total, paymentMode);
+    const payResult = await recordPaymentViaRpc(requestId, req.total, paymentMode);
+    if (!payResult.success) {
+      showToast(`Payment collection failed: ${payResult.message}`, 'error');
+      return;
+    }
 
     setRequests((prev) =>
       prev.map((r) => {
@@ -3321,8 +3696,6 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       updateServiceRequestInSupabase(requestId, {
         status: 'COMPLETED',
         work_completed_at: new Date().toISOString(),
-        payment_status: 'PAID',
-        payment_method: paymentMode,
         technician_notes: notes || undefined
       }).catch((err) => console.error('Failed to sync vendor complete job to Supabase:', err));
     }
@@ -3601,7 +3974,11 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }
 
     // SEC-02: Record payment via database RPC record_payment()
-    await recordPaymentViaRpc(requestId, req.total, payMode);
+    const payResult = await recordPaymentViaRpc(requestId, req.total, payMode);
+    if (!payResult.success) {
+      showToast(`Payment collection failed: ${payResult.message}`, 'error');
+      return;
+    }
 
     setRequests((prev) =>
       prev.map((r) => {
@@ -3680,8 +4057,6 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       updateServiceRequestInSupabase(requestId, {
         status: 'COMPLETED',
         work_completed_at: new Date().toISOString(),
-        payment_status: 'PAID',
-        payment_method: payMode,
         technician_notes: completionNotes || undefined,
         completion_photos: completionPhotos,
         completion_notes: materialInfo || undefined
@@ -3858,6 +4233,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         toggleServiceActive,
         addService,
         deleteService,
+        addPackage,
         updatePackage,
         deletePackage,
         cart,
@@ -3871,7 +4247,10 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         createBookingFromCart,
         createCustomRequirement,
         createProjectRequest,
+        createPhoneBooking,
         updateRequestStatus,
+        updateVendorResponseStatus,
+        markWhatsAppNotificationSent,
         assignRequest,
         reassignRequest,
         vendors,

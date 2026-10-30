@@ -166,37 +166,76 @@ serve(async (req: Request) => {
 
       const finalPlan = plan && typeof plan === "object" ? plan : defaultPlan;
 
+      // 1. Create Supabase Auth user (bcrypt hashed credentials in auth.users)
+      const vendorEmail = email ? email.trim().toLowerCase() : `${ownerName.toLowerCase().replace(/\s+/g, "")}@gmail.com`;
+
+      const { data: newUser, error: authCreateErr } = await supabaseAdmin.auth.admin.createUser({
+        email: vendorEmail,
+        password: password.trim(),
+        email_confirm: true,
+        user_metadata: {
+          full_name: ownerName.trim() || businessName.trim(),
+          phone: phone.trim(),
+          role: "customer", // starts strictly with customer role, not vendor
+        },
+      });
+
+      if (authCreateErr || !newUser?.user) {
+        console.error("[create-staff-user] Auth user creation error for prospective vendor:", authCreateErr);
+        const errMsg = authCreateErr?.message?.toLowerCase().includes("already")
+          ? `An account with email ${vendorEmail} is already registered.`
+          : (authCreateErr?.message || "Failed to register credentials.");
+        return new Response(
+          JSON.stringify({ error: errMsg }),
+          { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        );
+      }
+
+      const createdUserId = newUser.user.id;
+
       const { data: insertedVendor, error: insertError } = await supabaseAdmin
         .from("vendors")
         .insert({
           id: newVndId,
+          user_id: createdUserId,
           business_name: businessName.trim(),
           owner_name: ownerName.trim(),
           mobile: phone.trim(),
-          email: email ? email.trim().toLowerCase() : `${ownerName.toLowerCase().replace(/\s+/g, "")}@gmail.com`,
+          email: vendorEmail,
           status: "PENDING_VERIFICATION",
           categories: cats,
           service_areas: areas,
           experience_years: Number(experienceYears) || 5,
           rating: 5.0,
           plan: finalPlan,
-          password: password.trim(),
         })
         .select()
         .single();
 
       if (insertError) {
         console.error("[create-staff-user] Partner application insert error:", insertError);
+        // Rollback auth user
+        try {
+          await supabaseAdmin.auth.admin.deleteUser(createdUserId);
+          await supabaseAdmin.from("profiles").delete().eq("id", createdUserId);
+        } catch (cleanupErr) {
+          console.error("[create-staff-user] Cleanup error:", cleanupErr);
+        }
         return new Response(
           JSON.stringify({ error: `Failed to save partner application: ${insertError.message}` }),
           { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
         );
       }
 
+      const sanitizedVendor = { ...insertedVendor };
+      if ("password" in sanitizedVendor) {
+        delete (sanitizedVendor as any).password;
+      }
+
       return new Response(
         JSON.stringify({
           success: true,
-          vendor: insertedVendor,
+          vendor: sanitizedVendor,
           message: "Partner application submitted! Queued for Operations Manager review & activation.",
         }),
         { status: 201, headers: { ...corsHeaders, "Content-Type": "application/json" } }
@@ -290,42 +329,26 @@ serve(async (req: Request) => {
 
       let finalUserId = vnd.user_id;
 
-      if (!finalUserId && vnd.email && vnd.password) {
+      if (finalUserId) {
+        await supabaseAdmin
+          .from("profiles")
+          .update({ role: "vendor" })
+          .eq("id", finalUserId);
+      } else if (vnd.email) {
+        // Fallback for legacy records without user_id: check if profile exists with matching phone
         const rawDigits = vnd.mobile ? vnd.mobile.replace(/\D/g, "") : "";
         let normPhone = rawDigits;
         if (normPhone.length === 12 && normPhone.startsWith("91")) normPhone = normPhone.slice(2);
         else if (normPhone.length > 10 && normPhone.startsWith("0")) normPhone = normPhone.replace(/^0+/, "");
 
-        let existingUser: any = null;
         if (normPhone && normPhone.length === 10) {
           const { data: prof } = await supabaseAdmin
             .from("profiles")
             .select("id")
             .eq("phone_normalized", normPhone)
             .maybeSingle();
-          if (prof) existingUser = prof;
-        }
-
-        if (existingUser) {
-          finalUserId = existingUser.id;
-          await supabaseAdmin
-            .from("profiles")
-            .update({ role: "vendor" })
-            .eq("id", finalUserId);
-        } else {
-          const { data: newUser, error: createErr } = await supabaseAdmin.auth.admin.createUser({
-            email: vnd.email,
-            password: vnd.password,
-            email_confirm: true,
-            user_metadata: {
-              full_name: vnd.owner_name || vnd.business_name,
-              phone: vnd.mobile || "",
-              role: "vendor",
-            },
-          });
-
-          if (!createErr && newUser?.user) {
-            finalUserId = newUser.user.id;
+          if (prof) {
+            finalUserId = prof.id;
             await supabaseAdmin
               .from("profiles")
               .update({ role: "vendor" })
@@ -358,10 +381,15 @@ serve(async (req: Request) => {
         );
       }
 
+      const sanitizedUpdatedVnd = { ...updatedVnd };
+      if ("password" in sanitizedUpdatedVnd) {
+        delete (sanitizedUpdatedVnd as any).password;
+      }
+
       return new Response(
         JSON.stringify({
           success: true,
-          vendor: updatedVnd,
+          vendor: sanitizedUpdatedVnd,
           message: `Vendor ${vnd.business_name} approved and activated successfully.`,
         }),
         { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } }

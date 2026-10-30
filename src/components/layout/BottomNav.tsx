@@ -1,6 +1,11 @@
 import React from 'react';
 import { useApp } from '../../context/AppContext';
 import { Home, Layers, CalendarCheck, User, MessageCircle, Phone } from 'lucide-react';
+import {
+  getWhatsAppUrl,
+  getGeneralEnquiryWhatsAppUrl,
+  getBookingEnquiryWhatsAppUrl
+} from '../../utils/whatsapp';
 
 /**
  * Mobile-First Fixed Bottom Navigation:
@@ -25,7 +30,8 @@ export const BottomNav: React.FC = () => {
     isCustomTaskModalOpen,
     isProjectModalOpen,
     isLocalityModalOpen,
-    selectedDetailServiceId
+    selectedDetailServiceId,
+    currentLocality
   } = useApp();
 
   // Hide sticky bottom bar on dedicated staff portals (they have their own internal navigation)
@@ -81,6 +87,28 @@ export const BottomNav: React.FC = () => {
     (currentPage === 'account' && accountTab !== 'bookings') ||
     currentPage === staffPortalTarget;
 
+  const bottomNavWhatsAppUrl = React.useMemo(() => {
+    if (activeCustomerOrder) {
+      return getBookingEnquiryWhatsAppUrl(
+        activeCustomerOrder.id,
+        activeCustomerOrder.items.map((i) => i.serviceName),
+        activeCustomerOrder.status,
+        currentLocality
+      );
+    }
+    if (currentPage === 'services') {
+      return getWhatsAppUrl(
+        `Hello UrbanCare Solution, I'm exploring services in ${currentLocality} and need some guidance.`
+      );
+    }
+    if (currentPage === 'projects') {
+      return getWhatsAppUrl(
+        `Hello UrbanCare Solution, I would like to enquire about home project services in ${currentLocality}.`
+      );
+    }
+    return getGeneralEnquiryWhatsAppUrl(currentLocality);
+  }, [activeCustomerOrder, currentPage, currentLocality]);
+
   return (
     <>
       {/* Quick Floating WhatsApp Support Trigger:
@@ -90,7 +118,7 @@ export const BottomNav: React.FC = () => {
       */}
       {!isCartDrawerOpen && !isAuthModalOpen && !isCustomTaskModalOpen && !isProjectModalOpen && !isLocalityModalOpen && !selectedDetailServiceId && (
         <a
-          href="https://wa.me/918284018909"
+          href={bottomNavWhatsAppUrl}
           target="_blank"
           rel="noopener noreferrer"
           aria-label="Direct WhatsApp Help"

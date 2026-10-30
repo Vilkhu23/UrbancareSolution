@@ -127,8 +127,7 @@ export const mapVendorFromDb = (row: any): Vendor => {
     rating: Number(row.rating) || 4.8,
     createdAt: row.created_at || new Date().toISOString(),
     plan: planData,
-    onboardingPayment,
-    password: row.password || undefined
+    onboardingPayment
   };
 };
 
@@ -147,8 +146,7 @@ export const mapVendorToDb = (vnd: Vendor) => ({
   plan: {
     ...vnd.plan,
     onboardingPayment: vnd.onboardingPayment || vnd.plan.onboardingPayment
-  },
-  password: vnd.password || null
+  }
 });
 
 export const mapServiceRequestFromDb = (row: any): ServiceRequest => {
@@ -169,6 +167,38 @@ export const mapServiceRequestFromDb = (row: any): ServiceRequest => {
     }
   }
 
+  // Parse location metadata if present in columns or technician_notes tag
+  let parsedLocation: any = undefined;
+  let parsedLat: number | undefined = row.latitude ? Number(row.latitude) : undefined;
+  let parsedLng: number | undefined = row.longitude ? Number(row.longitude) : undefined;
+  let parsedPlaceId: string | undefined = row.place_id || undefined;
+
+  if (row.technician_notes && typeof row.technician_notes === 'string') {
+    const geoMatch = row.technician_notes.match(/\[GEO_LOCATION\]:\s*(\{.*?\})/);
+    if (geoMatch && geoMatch[1]) {
+      try {
+        parsedLocation = JSON.parse(geoMatch[1]);
+        if (parsedLocation.latitude && !parsedLat) parsedLat = Number(parsedLocation.latitude);
+        if (parsedLocation.longitude && !parsedLng) parsedLng = Number(parsedLocation.longitude);
+        if (parsedLocation.placeId && !parsedPlaceId) parsedPlaceId = parsedLocation.placeId;
+      } catch {
+        // ignore JSON parse error
+      }
+    }
+  }
+
+  if (!parsedLocation && parsedLat && parsedLng) {
+    parsedLocation = {
+      formattedAddress: row.customer_address || '',
+      latitude: parsedLat,
+      longitude: parsedLng,
+      placeId: parsedPlaceId,
+      locality: row.locality || '',
+      city: 'Kharar',
+      postalCode: '140301'
+    };
+  }
+
   return {
     id: row.id,
     user_id: row.user_id || undefined,
@@ -176,7 +206,11 @@ export const mapServiceRequestFromDb = (row: any): ServiceRequest => {
     customerPhone: row.customer_phone,
     address: row.customer_address || 'Address provided on booking',
     locality: row.locality,
-    requestType: 'STANDARD_SERVICE',
+    location: parsedLocation,
+    latitude: parsedLat,
+    longitude: parsedLng,
+    placeId: parsedPlaceId,
+    requestType: (row.request_type as any) || 'STANDARD_SERVICE',
     items: Array.isArray(row.items) ? row.items : [],
     status: row.status,
     subtotal: Number(row.subtotal) || Number(row.total) || 0,
@@ -221,14 +255,54 @@ export const mapServiceRequestToDb = (req: ServiceRequest) => {
     }
   }
 
+  let techNotes = req.notes || req.materialInfo || '';
+  if (req.location) {
+    const geoPayload = JSON.stringify({
+      formattedAddress: req.location.formattedAddress,
+      latitude: req.location.latitude,
+      longitude: req.location.longitude,
+      placeId: req.location.placeId,
+      houseFlat: req.location.houseFlat,
+      buildingSociety: req.location.buildingSociety,
+      street: req.location.street,
+      locality: req.location.locality,
+      city: req.location.city,
+      postalCode: req.location.postalCode,
+      accessInstructions: req.location.accessInstructions
+    });
+    if (!techNotes.includes('[GEO_LOCATION]:')) {
+      techNotes = techNotes ? `${techNotes}\n[GEO_LOCATION]: ${geoPayload}` : `[GEO_LOCATION]: ${geoPayload}`;
+    } else {
+      techNotes = techNotes.replace(/\[GEO_LOCATION\]:\s*\{.*?\}/, `[GEO_LOCATION]: ${geoPayload}`);
+    }
+  }
+
+  // Safely format and clamp items array
+  const formattedItems = Array.isArray(req.items)
+    ? req.items.map((item) => {
+        const anyItem = item as any;
+        const serviceId = item.serviceId || anyItem.id || (req.requestType === 'CUSTOM_REQUIREMENT' ? 'srv-ac-inspect' : '');
+        const qty = Math.max(1, Math.min(100, Math.floor(Number(item.quantity) || 1)));
+        return {
+          serviceId,
+          serviceName: item.serviceName || anyItem.name || 'Service Item',
+          quantity: qty,
+          price: Number(item.price) || 0,
+          price_type: item.price_type || 'fixed',
+          isPackage: Boolean(item.isPackage)
+        };
+      })
+    : [];
+
   return {
     id: req.id,
     user_id: req.user_id || null,
     customer_name: req.customerName,
     customer_phone: req.customerPhone,
-    customer_address: req.address,
-    locality: req.locality,
-    items: req.items,
+    customer_address: req.location?.formattedAddress || req.address,
+    locality: req.location?.locality || req.locality,
+    request_type: req.requestType || 'STANDARD_SERVICE',
+    items: formattedItems,
     status: req.status,
     preferred_date: req.preferredDate,
     preferred_slot: req.preferredTimeSlot,
@@ -239,7 +313,7 @@ export const mapServiceRequestToDb = (req: ServiceRequest) => {
     payment_status: req.paymentStatus === 'PAID' ? 'PAID' : 'PENDING',
     payment_method: req.paymentMode || req.paymentCollectedMode || 'CASH',
     assigned_to: req.assignedTo || null,
-    technician_notes: req.notes || req.materialInfo || null,
+    technician_notes: techNotes || null,
     vendor_scheduled_time: req.confirmedScheduleSlot || null,
     vendor_arrival_status: req.vendorArrivalStatus === 'ARRIVED' ? 'ARRIVED' : 'PENDING',
     work_started_at: req.workStartedAt ? new Date().toISOString() : null,
@@ -613,7 +687,6 @@ export const loadAllDataFromSupabase = async () => {
       dispatchCenterName: 'UrbanCare Operations Command - Kharar Hub',
       emergencyHotline: opsRes.data.emergency_contact || '+91 98889 00122',
       supportEmail: 'ops@urbancaresolution.in',
-      password: opsRes.data.password || '',
       defaultVisitFee: 99,
       defaultGstPercent: 18,
       requireSupervisorSignoff: true,
@@ -731,7 +804,8 @@ export const syncEmployeeToSupabase = async (employee: Employee): Promise<boolea
  * This runs with service-role permissions server-side, bypassing table RLS for unauthenticated applicants.
  */
 export const submitPartnerApplication = async (
-  vendor: Vendor
+  vendor: Vendor,
+  password?: string
 ): Promise<{ success: boolean; error?: string; vendor?: Vendor }> => {
   if (!isSupabaseConfigured()) return { success: true, vendor };
   try {
@@ -748,7 +822,7 @@ export const submitPartnerApplication = async (
         serviceAreas: vendor.serviceAreas,
         experienceYears: vendor.experienceYears,
         plan: vendor.plan,
-        password: vendor.password
+        password: password
       }
     });
 
@@ -831,20 +905,38 @@ export const syncVendorToSupabase = async (vendor: Vendor): Promise<boolean> => 
   }
 };
 
+export interface ServiceRequestSyncOutcome {
+  success: boolean;
+  error?: string;
+  data?: any;
+}
+
 /**
  * Persists a domestic service request / dispatch into Supabase PostgreSQL.
+ * Returns authoritative outcome including server-computed row and database error messages.
  */
-export const syncServiceRequestToSupabase = async (request: ServiceRequest): Promise<boolean> => {
-  if (!isSupabaseConfigured()) return false;
+export const syncServiceRequestToSupabase = async (
+  request: ServiceRequest
+): Promise<ServiceRequestSyncOutcome> => {
+  if (!isSupabaseConfigured()) {
+    return { success: false, error: 'Supabase is not configured' };
+  }
   try {
-    const { error } = await supabase
+    const payload = mapServiceRequestToDb(request);
+    const { data, error } = await supabase
       .from('service_requests')
-      .upsert(mapServiceRequestToDb(request), { onConflict: 'id' });
-    if (error) console.error('Supabase request upsert error:', error);
-    return !error;
-  } catch (err) {
+      .insert(payload)
+      .select();
+
+    if (error) {
+      console.error('Supabase request upsert error:', error);
+      return { success: false, error: error.message || String(error) };
+    }
+    const insertedRow = data && data.length > 0 ? data[0] : undefined;
+    return { success: true, data: insertedRow };
+  } catch (err: any) {
     console.error('Failed to sync service request to Supabase:', err);
-    return false;
+    return { success: false, error: err?.message || String(err) };
   }
 };
 
@@ -963,7 +1055,8 @@ export const syncComplaintToSupabase = async (complaint: ComplaintRecord): Promi
 export const recordPaymentViaRpc = async (
   requestId: string,
   amount: number,
-  method: 'CASH' | 'UPI' | 'ONLINE'
+  method: 'CASH' | 'UPI' | 'ONLINE',
+  referenceId?: string
 ): Promise<{ success: boolean; message: string }> => {
   if (!isSupabaseConfigured()) {
     if (!import.meta.env.DEV) {
@@ -976,7 +1069,8 @@ export const recordPaymentViaRpc = async (
     const { data, error } = await supabase.rpc('record_payment', {
       p_request_id: requestId,
       p_amount: amount,
-      p_method: method
+      p_method: method,
+      ...(referenceId && referenceId.trim() ? { p_reference_id: referenceId.trim() } : {})
     });
 
     if (error) {
@@ -1148,7 +1242,8 @@ export const fetchCustomerBookingSecret = async (
 
 /**
  * Persists a payment record to Supabase PostgreSQL using record_payment RPC.
- * Online gateway payments will be written by a payment webhook using the service_role key.
+ * Phase 1 Scope: Supports manual on-site CASH and UPI collections recorded by staff/admin.
+ * Phase 2 Scope: Payment gateway integration, automated webhooks, and gateway reconciliation are deferred to Phase 2.
  */
 export const syncPaymentToSupabase = async (payment: PaymentRecord): Promise<boolean> => {
   if (!isSupabaseConfigured()) return false;
@@ -1203,7 +1298,6 @@ export const syncOpsSettingsToSupabase = async (settings: OpsSettings): Promise<
       .from('ops_settings')
       .upsert({
         id: 'ops-config',
-        password: settings.password || 'OpsLead@2026',
         auto_assignment_enabled: true,
         emergency_contact: settings.emergencyHotline || '+91 98889 00122',
         dispatch_coverage_radius_km: settings.serviceRadiusKm || 12.5

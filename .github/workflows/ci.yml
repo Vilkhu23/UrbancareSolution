@@ -1,0 +1,105 @@
+name: PindCare Phase 1 CI & Database Security Gate
+
+on:
+  push:
+    branches:
+      - main
+      - master
+      - "feature/**"
+  pull_request:
+    branches:
+      - main
+      - master
+
+permissions:
+  contents: read
+
+jobs:
+  # ============================================================================
+  # Job 1: Application Quality Gate
+  # Validates TypeScript compilation, 360 unit/integration tests, and production build
+  # ============================================================================
+  app-quality-gate:
+    name: App Quality, Types & Unit Tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js 24 (matching project local runtime)
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: "npm"
+
+      - name: Install dependencies (clean install)
+        run: npm ci
+
+      - name: TypeScript type check & lint
+        run: npm run lint
+
+      - name: Run application unit & integration tests (360 tests)
+        run: npx tsx --test src/**/*.test.ts
+
+      - name: Verify production build (Vite bundle)
+        run: npm run build
+
+  # ============================================================================
+  # Job 2: Database Security Gate
+  # Runs in isolated Docker container via Supabase CLI only after Job 1 succeeds
+  # ============================================================================
+  database-security-gate:
+    name: Database Initialization & Security Tests
+    needs: app-quality-gate
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Supabase CLI
+        uses: supabase/setup-cli@v1
+        with:
+          version: 1.207.9
+
+      - name: Verify Docker daemon availability
+        run: |
+          echo "=== Docker Daemon Verification ==="
+          docker version
+          docker info --format '{{.ServerVersion}}'
+
+      - name: Start isolated local Supabase environment
+        run: |
+          echo "Starting isolated local Supabase containers..."
+          supabase start
+
+      - name: Apply baseline schema, migrations 1-20, and seed data
+        run: |
+          echo "Executing supabase db reset to apply baseline migration 0 through migration 20..."
+          supabase db reset
+
+      - name: Verify PostgreSQL version meets requirement (Major version 15)
+        run: |
+          echo "=== Verifying PostgreSQL Runtime Version ==="
+          PG_FULL_VERSION=$(PGPASSWORD=postgres psql -h localhost -p 54322 -U postgres -d postgres -t -A -c "SELECT version();")
+          echo "Full version string: $PG_FULL_VERSION"
+          PG_VERSION=$(PGPASSWORD=postgres psql -h localhost -p 54322 -U postgres -d postgres -t -A -c "SHOW server_version;")
+          echo "Server version: $PG_VERSION"
+          PG_MAJOR=$(echo "$PG_VERSION" | cut -d. -f1)
+          echo "Detected PostgreSQL Major Version: $PG_MAJOR"
+          if [ "$PG_MAJOR" -ne 15 ]; then
+            echo "ERROR: PostgreSQL major version mismatch! Expected 15 per supabase/config.toml, got '$PG_MAJOR'."
+            exit 1
+          fi
+          echo "PostgreSQL 15 requirement verified successfully."
+
+      - name: Execute database security test suite (Authoritative fail-closed psql)
+        run: |
+          echo "=== Executing supabase/tests/security_tests.sql via psql (ON_ERROR_STOP=1) ==="
+          PGPASSWORD=postgres psql -h localhost -p 54322 -U postgres -d postgres -v ON_ERROR_STOP=1 -f supabase/tests/security_tests.sql
+
+      - name: Teardown local Supabase environment
+        if: always()
+        run: |
+          echo "Tearing down isolated local Supabase containers..."
+          supabase stop --no-backup
+

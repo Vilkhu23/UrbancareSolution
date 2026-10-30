@@ -86,19 +86,18 @@ export const VendorPortal: React.FC = () => {
   const [selectedRequestForNote, setSelectedRequestForNote] = useState<ServiceRequest | null>(null);
   const [previewPhotoUrl, setPreviewPhotoUrl] = useState<string | null>(null);
 
-  // Current logged in vendor object (matched by user_id or active ID)
+  // Current logged in vendor object (strictly matched by user_id or active ID)
   const currentVendor = useMemo(() => {
-    return (
-      vendors.find((v) => (authProfile?.id && v.user_id === authProfile.id) || v.id === currentVendorId) ||
-      vendors[0] ||
-      null
-    );
+    if (authProfile?.id) {
+      return vendors.find((v) => v.user_id === authProfile.id) || null;
+    }
+    return vendors.find((v) => v.id === currentVendorId) || null;
   }, [vendors, currentVendorId, authProfile]);
 
   // Filter requests relevant to this vendor
   // 1. Pending Acceptance: Assigned to this vendor, status is 'ASSIGNED'
   const pendingRequests = useMemo(() => {
-    if (!currentVendor) return [];
+    if (!currentVendor || currentVendor.status !== 'ACTIVE') return [];
     return requests.filter(
       (r) => r.assignedTo?.id === currentVendor.id && r.status === 'ASSIGNED'
     );
@@ -106,7 +105,7 @@ export const VendorPortal: React.FC = () => {
 
   // 2. Active Jobs: Assigned to this vendor, status in ['ACCEPTED', 'SCHEDULED', 'IN PROGRESS']
   const activeJobs = useMemo(() => {
-    if (!currentVendor) return [];
+    if (!currentVendor || currentVendor.status !== 'ACTIVE') return [];
     return requests.filter(
       (r) =>
         r.assignedTo?.id === currentVendor.id &&
@@ -116,7 +115,7 @@ export const VendorPortal: React.FC = () => {
 
   // 3. Completed Jobs: Assigned to this vendor, status in ['COMPLETED', 'CUSTOMER CONFIRMED', 'CLOSED']
   const completedJobs = useMemo(() => {
-    if (!currentVendor) return [];
+    if (!currentVendor || currentVendor.status !== 'ACTIVE') return [];
     return requests.filter(
       (r) =>
         r.assignedTo?.id === currentVendor.id &&
@@ -126,7 +125,7 @@ export const VendorPortal: React.FC = () => {
 
   // 4. New Opportunities in Cluster: Unassigned requests in trades matching vendor categories
   const newClusterOpportunities = useMemo(() => {
-    if (!currentVendor) return [];
+    if (!currentVendor || currentVendor.status !== 'ACTIVE') return [];
     return requests.filter(
       (r) =>
         !r.assignedTo &&
@@ -144,7 +143,7 @@ export const VendorPortal: React.FC = () => {
 
   // Vendor's opportunity ledger entries
   const vendorLedgerEntries = useMemo(() => {
-    if (!currentVendor) return [];
+    if (!currentVendor || currentVendor.status !== 'ACTIVE') return [];
     return opportunityLedger.filter((entry) => entry.vendorId === currentVendor.id);
   }, [opportunityLedger, currentVendor]);
 
@@ -169,7 +168,83 @@ export const VendorPortal: React.FC = () => {
           </div>
           <h3 className="text-lg font-bold text-gray-900">Vendor Record Not Found</h3>
           <p className="text-xs text-gray-600">
-            No vendor profile is linked to your current authenticated account.
+            No active vendor profile is linked to your current authenticated account.
+          </p>
+          <button
+            onClick={() => {
+              logout();
+              setCurrentPage('home');
+            }}
+            className="px-4 py-2 bg-[#003523] text-white rounded-xl text-xs font-bold"
+          >
+            Return to Home
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+
+  // SEC-01: Pending vendor authorization barrier
+  if (currentVendor.status === 'PENDING_VERIFICATION') {
+    return (
+      <div className="min-h-[85vh] bg-[#f8faf9] py-16 px-4 flex items-center justify-center">
+        <div className="max-w-lg w-full bg-white rounded-3xl p-8 border border-gray-200 shadow-sm text-center space-y-5">
+          <div className="w-16 h-16 rounded-3xl bg-amber-50 text-amber-600 flex items-center justify-center mx-auto border border-amber-200">
+            <Clock className="w-8 h-8 animate-pulse" />
+          </div>
+          <div>
+            <span className="inline-flex items-center px-3 py-1 rounded-full text-xs font-bold bg-amber-100 text-amber-800 mb-2">
+              Application Under Review
+            </span>
+            <h2 className="text-xl font-black text-gray-900">Partner Verification in Progress</h2>
+            <p className="text-sm text-gray-600 mt-2 leading-relaxed">
+              Welcome, <span className="font-semibold text-gray-900">{currentVendor.ownerName}</span> ({currentVendor.businessName}). Your partner onboarding application has been registered and is pending verification by our Operations Command team.
+            </p>
+          </div>
+          <div className="bg-gray-50 rounded-2xl p-4 text-left text-xs text-gray-600 space-y-2 border border-gray-100">
+            <div className="flex justify-between">
+              <span className="text-gray-500">Registered Mobile:</span>
+              <span className="font-semibold text-gray-800">{currentVendor.mobile}</span>
+            </div>
+            <div className="flex justify-between">
+              <span className="text-gray-500">Trade Categories:</span>
+              <span className="font-semibold text-gray-800">{currentVendor.categories.join(', ')}</span>
+            </div>
+            <div className="flex justify-between">
+              <span className="text-gray-500">Plan Selected:</span>
+              <span className="font-semibold text-gray-800">{currentVendor.plan?.name || 'Partner Plan'}</span>
+            </div>
+          </div>
+          <p className="text-xs text-gray-500">
+            Once our Operations Manager verifies your trade documents and onboarding details, your active job dispatches, customer assignments, and lead ledger will be enabled.
+          </p>
+          <div className="pt-2">
+            <button
+              onClick={() => {
+                logout();
+                setCurrentPage('home');
+              }}
+              className="w-full px-5 py-2.5 bg-[#003523] hover:bg-[#002619] text-white rounded-xl text-xs font-bold transition-colors"
+            >
+              Sign Out & Return Home
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  if (currentVendor.status === 'SUSPENDED' || currentVendor.status === 'REJECTED') {
+    return (
+      <div className="min-h-[85vh] bg-[#f8faf9] py-16 px-4 flex items-center justify-center">
+        <div className="max-w-md w-full bg-white rounded-3xl p-8 border border-gray-200 shadow-sm text-center space-y-4">
+          <div className="w-14 h-14 rounded-2xl bg-red-50 text-red-600 flex items-center justify-center mx-auto border border-red-200">
+            <AlertTriangle className="w-7 h-7" />
+          </div>
+          <h2 className="text-lg font-bold text-gray-900">Partner Account Suspended</h2>
+          <p className="text-xs text-gray-600 leading-relaxed">
+            Your partner portal account is currently inactive. Please contact UrbanCare Operations Command for assistance.
           </p>
           <button
             onClick={() => {

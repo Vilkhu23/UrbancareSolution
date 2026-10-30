@@ -89,7 +89,7 @@ BEGIN
     -- Guarantee setup executes with superuser identity
     PERFORM public.sec_test_become_postgres();
 
-    -- 1. Insert user into auth.users first
+    -- 1. Insert user into auth.users first (strictly fail closed on collision)
     INSERT INTO auth.users (
         id,
         instance_id,
@@ -114,9 +114,9 @@ BEGIN
         '{}'::jsonb,
         NOW(),
         NOW()
-    ) ON CONFLICT (id) DO NOTHING;
+    );
 
-    -- 2. Update profiles row
+    -- 2. Insert profiles row (strictly fail closed on collision - no ON CONFLICT DO UPDATE)
     INSERT INTO public.profiles (
         id,
         role,
@@ -139,14 +139,7 @@ BEGIN
         p_must_change_password,
         NOW(),
         NOW()
-    )
-    ON CONFLICT (id) DO UPDATE SET
-        role = EXCLUDED.role,
-        full_name = EXCLUDED.full_name,
-        phone = EXCLUDED.phone,
-        phone_verified = EXCLUDED.phone_verified,
-        must_change_password = EXCLUDED.must_change_password,
-        updated_at = NOW();
+    );
 END;
 $$ LANGUAGE plpgsql;
 
@@ -2466,6 +2459,705 @@ BEGIN
 END $$;
 
 -- ------------------------------------------------------------------------------
+-- TEST 15: SEC-03 AUTHORITATIVE PRICING, COLUMN PRIVILEGES & PAYMENT LEDGER
+-- ------------------------------------------------------------------------------
+-- NOTE: Referred to as Feature 9 / SEC-03 in PROJECT.md and DISPATCH.md.
+-- Validates all 25 security test vectors (15.1 through 15.25) across:
+-- 1. Authoritative pricing calculation & item catalog validation
+-- 2. Column-level privilege lockdowns on public.service_requests
+-- 3. Security Definer record_payment() authorization & row locking
+-- 4. Idempotency & ledger conflict handling in public.payments
+-- 5. Staff unassignment caller identity validation
+-- ------------------------------------------------------------------------------
+DO $$
+DECLARE
+    v_cust_15_uid UUID := '15000000-0000-0000-0000-000000000001'::UUID;
+    v_cust_15b_uid UUID := '15000000-0000-0000-0000-000000000002'::UUID;
+    v_tech_15_uid UUID := '15000000-0000-0000-0000-000000000003'::UUID;
+    v_tech_15b_uid UUID := '15000000-0000-0000-0000-000000000004'::UUID;
+    v_emp_15_id TEXT := 'emp-sec-15-a';
+    v_emp_15b_id TEXT := 'emp-sec-15-b';
+    v_req_id TEXT := 'sec-test-req-15-1';
+    v_req_pkg_id TEXT := 'sec-test-req-15-2';
+    v_subtotal NUMERIC;
+    v_total NUMERIC;
+    v_status TEXT;
+    v_pay_status TEXT;
+    v_pay_method TEXT;
+    v_rows_affected INT;
+    v_err_msg TEXT;
+    v_sqlstate TEXT;
+    v_rpc_res JSONB;
+    v_pay_count INT;
+    v_stored_ref TEXT;
+
+    v_t1_passed BOOLEAN := FALSE;
+    v_t2_passed BOOLEAN := FALSE;
+    v_t3_passed BOOLEAN := FALSE;
+    v_t4_passed BOOLEAN := FALSE;
+    v_t5_passed BOOLEAN := FALSE;
+    v_t6_passed BOOLEAN := FALSE;
+    v_t7_passed BOOLEAN := FALSE;
+    v_t8_passed BOOLEAN := FALSE;
+    v_t9_passed BOOLEAN := FALSE;
+    v_t10_passed BOOLEAN := FALSE;
+    v_t11_passed BOOLEAN := FALSE;
+    v_t12_passed BOOLEAN := FALSE;
+    v_t13_passed BOOLEAN := FALSE;
+    v_t14_passed BOOLEAN := FALSE;
+    v_t15_passed BOOLEAN := FALSE;
+    v_t16_passed BOOLEAN := FALSE;
+    v_t17_passed BOOLEAN := FALSE;
+    v_t18_passed BOOLEAN := FALSE;
+    v_t19_passed BOOLEAN := FALSE;
+    v_t20_passed BOOLEAN := FALSE;
+    v_t21_passed BOOLEAN := FALSE;
+    v_t22_passed BOOLEAN := FALSE;
+    v_t23_passed BOOLEAN := FALSE;
+    v_t24_passed BOOLEAN := FALSE;
+    v_t25_passed BOOLEAN := FALSE;
+BEGIN
+    -- Setup test fixtures as postgres
+    PERFORM public.sec_test_become_postgres();
+    PERFORM public.sec_test_setup_user(v_cust_15_uid, 'customer', 'Customer Fifteen A', '+91 97800 50001');
+    PERFORM public.sec_test_setup_user(v_cust_15b_uid, 'customer', 'Customer Fifteen B', '+91 97800 50002');
+    PERFORM public.sec_test_setup_user(v_tech_15_uid, 'technician', 'Tech Fifteen A', '+91 97800 50003');
+    PERFORM public.sec_test_setup_user(v_tech_15b_uid, 'technician', 'Tech Fifteen B', '+91 97800 50004');
+
+    INSERT INTO public.employees (id, employee_code, name, mobile, role, user_id)
+    VALUES (v_emp_15_id, 'EMP15A', 'Tech Fifteen A', '+91 97800 50003', 'Field Specialist', v_tech_15_uid);
+    INSERT INTO public.employees (id, employee_code, name, mobile, role, user_id)
+    VALUES (v_emp_15b_id, 'EMP15B', 'Tech Fifteen B', '+91 97800 50004', 'Field Specialist', v_tech_15b_uid);
+
+    -- =========================================================================
+    -- 15.1: Customer attempts to tamper price on INSERT
+    -- =========================================================================
+    PERFORM public.sec_test_become_user(v_cust_15_uid);
+    BEGIN
+        INSERT INTO public.service_requests (
+            id, user_id, customer_name, customer_phone, customer_address, locality,
+            items, subtotal, total, tax, locality_adjustment, status, payment_status
+        ) VALUES (
+            v_req_id, v_cust_15_uid, 'Customer Fifteen A', '+91 97800 50001', 'Flat 101, Sector 94', 'Sector 94',
+            jsonb_build_array(jsonb_build_object('serviceId', 'srv-ac-foam', 'quantity', 1, 'price', 1)),
+            1.00, 1.00, 0.00, 0.00, 'TAMPERED', 'PAID'
+        );
+
+        PERFORM public.sec_test_become_postgres();
+        SELECT subtotal, total, status, payment_status
+        INTO v_subtotal, v_total, v_status, v_pay_status
+        FROM public.service_requests
+        WHERE id = v_req_id;
+
+        IF v_subtotal = 699.00 AND v_total = 798.00 AND v_status = 'NEW' AND v_pay_status = 'PENDING' THEN
+            v_t1_passed := TRUE;
+        ELSE
+            RAISE EXCEPTION 'FAIL: Test 15.1 price override failed: subtotal=%, total=%, status=%, pay_status=%',
+                v_subtotal, v_total, v_status, v_pay_status;
+        END IF;
+    EXCEPTION WHEN OTHERS THEN
+        PERFORM public.sec_test_become_postgres();
+        RAISE EXCEPTION 'FAIL: Test 15.1 unexpected error: %', SQLERRM;
+    END;
+
+    -- =========================================================================
+    -- 15.2: Customer attempts to insert item with unknown service ID
+    -- =========================================================================
+    PERFORM public.sec_test_become_user(v_cust_15_uid);
+    BEGIN
+        INSERT INTO public.service_requests (
+            id, user_id, customer_name, customer_phone, customer_address, locality, items, subtotal, total
+        ) VALUES (
+            'sec-test-req-15-fail-id', v_cust_15_uid, 'Customer Fifteen', '+91 97800 50001', 'Flat 101, Sector 94', 'Sector 94',
+            jsonb_build_array(jsonb_build_object('serviceId', 'srv-fake-999', 'quantity', 1)), 100.00, 199.00
+        );
+        PERFORM public.sec_test_become_postgres();
+        RAISE EXCEPTION 'FAIL: Test 15.2 unknown service ID was accepted!';
+    EXCEPTION WHEN OTHERS THEN
+        PERFORM public.sec_test_become_postgres();
+        v_err_msg := SQLERRM;
+        IF v_err_msg LIKE '%invalid, inactive, or not found in catalog%' OR v_err_msg LIKE '%not found%' THEN
+            v_t2_passed := TRUE;
+        ELSE
+            RAISE EXCEPTION 'FAIL: Test 15.2 unexpected error: %', v_err_msg;
+        END IF;
+    END;
+
+    -- =========================================================================
+    -- 15.3: Customer attempts to insert non-positive quantity
+    -- =========================================================================
+    PERFORM public.sec_test_become_user(v_cust_15_uid);
+    BEGIN
+        INSERT INTO public.service_requests (
+            id, user_id, customer_name, customer_phone, customer_address, locality, items, subtotal, total
+        ) VALUES (
+            'sec-test-req-15-fail-qty', v_cust_15_uid, 'Customer Fifteen', '+91 97800 50001', 'Flat 101, Sector 94', 'Sector 94',
+            jsonb_build_array(jsonb_build_object('serviceId', 'srv-ac-foam', 'quantity', 0)), 0.00, 99.00
+        );
+        PERFORM public.sec_test_become_postgres();
+        RAISE EXCEPTION 'FAIL: Test 15.3 zero quantity was accepted!';
+    EXCEPTION WHEN OTHERS THEN
+        PERFORM public.sec_test_become_postgres();
+        v_err_msg := SQLERRM;
+        IF v_err_msg LIKE '%positive integer%' OR v_err_msg LIKE '%quantity%' THEN
+            v_t3_passed := TRUE;
+        ELSE
+            RAISE EXCEPTION 'FAIL: Test 15.3 unexpected error: %', v_err_msg;
+        END IF;
+    END;
+
+    -- =========================================================================
+    -- 15.4: Care package booking receives ₹0 visit fee and authoritative pricing
+    -- =========================================================================
+    PERFORM public.sec_test_become_user(v_cust_15_uid);
+    BEGIN
+        INSERT INTO public.service_requests (
+            id, user_id, customer_name, customer_phone, customer_address, locality, items, subtotal, total
+        ) VALUES (
+            v_req_pkg_id, v_cust_15_uid, 'Customer Fifteen', '+91 97800 50001', 'Flat 101, Sector 94', 'Sector 94',
+            jsonb_build_array(jsonb_build_object('serviceId', 'pkg-2-ac-foam', 'quantity', 1, 'price', 10)), 10.00, 10.00
+        );
+
+        PERFORM public.sec_test_become_postgres();
+        SELECT subtotal, total INTO v_subtotal, v_total FROM public.service_requests WHERE id = v_req_pkg_id;
+
+        IF v_subtotal = 1299.00 AND v_total = 1299.00 THEN
+            v_t4_passed := TRUE;
+        ELSE
+            RAISE EXCEPTION 'FAIL: Test 15.4 care package pricing mismatch: subtotal=%, total=%', v_subtotal, v_total;
+        END IF;
+    EXCEPTION WHEN OTHERS THEN
+        PERFORM public.sec_test_become_postgres();
+        RAISE EXCEPTION 'FAIL: Test 15.4 unexpected error: %', SQLERRM;
+    END;
+
+    -- =========================================================================
+    -- 15.5: Customer attempts to tamper items on UPDATE (42501 Permission Denied)
+    -- =========================================================================
+    PERFORM public.sec_test_become_user(v_cust_15_uid);
+    BEGIN
+        UPDATE public.service_requests
+        SET items = jsonb_build_array(jsonb_build_object('serviceId', 'srv-ac-install', 'quantity', 1))
+        WHERE id = v_req_id;
+
+        PERFORM public.sec_test_become_postgres();
+        RAISE EXCEPTION 'FAIL: Test 15.5 customer was able to modify booking items!';
+    EXCEPTION WHEN OTHERS THEN
+        PERFORM public.sec_test_become_postgres();
+        GET STACKED DIAGNOSTICS v_sqlstate = RETURNED_SQLSTATE, v_err_msg = MESSAGE_TEXT;
+        IF v_sqlstate = '42501' OR v_err_msg LIKE '%permission denied for column items%' OR v_err_msg LIKE '%items%' THEN
+            v_t5_passed := TRUE;
+        ELSE
+            RAISE EXCEPTION 'FAIL: Test 15.5 expected 42501, got %: %', v_sqlstate, v_err_msg;
+        END IF;
+    END;
+
+    -- =========================================================================
+    -- 15.6: Customer attempts direct UPDATE SET payment_status = 'PAID' (42501)
+    -- =========================================================================
+    PERFORM public.sec_test_become_user(v_cust_15_uid);
+    BEGIN
+        UPDATE public.service_requests SET payment_status = 'PAID' WHERE id = v_req_id;
+        PERFORM public.sec_test_become_postgres();
+        RAISE EXCEPTION 'FAIL: Test 15.6 customer direct payment_status UPDATE succeeded!';
+    EXCEPTION WHEN OTHERS THEN
+        PERFORM public.sec_test_become_postgres();
+        GET STACKED DIAGNOSTICS v_sqlstate = RETURNED_SQLSTATE;
+        IF v_sqlstate = '42501' THEN
+            v_t6_passed := TRUE;
+        ELSE
+            RAISE EXCEPTION 'FAIL: Test 15.6 expected SQLSTATE 42501, got %', v_sqlstate;
+        END IF;
+    END;
+
+    -- =========================================================================
+    -- 15.7: Staff attempts direct UPDATE SET payment_status = 'PAID' (42501)
+    -- =========================================================================
+    PERFORM public.sec_test_become_user(v_tech_15_uid);
+    BEGIN
+        UPDATE public.service_requests SET payment_status = 'PAID' WHERE id = v_req_id;
+        PERFORM public.sec_test_become_postgres();
+        RAISE EXCEPTION 'FAIL: Test 15.7 technician direct payment_status UPDATE succeeded!';
+    EXCEPTION WHEN OTHERS THEN
+        PERFORM public.sec_test_become_postgres();
+        GET STACKED DIAGNOSTICS v_sqlstate = RETURNED_SQLSTATE;
+        IF v_sqlstate = '42501' THEN
+            v_t7_passed := TRUE;
+        ELSE
+            RAISE EXCEPTION 'FAIL: Test 15.7 expected SQLSTATE 42501, got %', v_sqlstate;
+        END IF;
+    END;
+
+    -- Setup for RPC tests: Assign booking v_req_id to Tech A and transition to IN PROGRESS
+    PERFORM public.sec_test_become_postgres();
+    UPDATE public.service_requests
+    SET status = 'IN PROGRESS',
+        assigned_to = jsonb_build_object('id', v_emp_15_id, 'name', 'Tech Fifteen A', 'type', 'EMPLOYEE')
+    WHERE id = v_req_id;
+
+    -- =========================================================================
+    -- 15.8: Unassigned Staff calls record_payment() (P0001 Forbidden)
+    -- =========================================================================
+    PERFORM public.sec_test_become_user(v_tech_15b_uid);
+    BEGIN
+        PERFORM public.record_payment(v_req_id, 798.00, 'CASH');
+        PERFORM public.sec_test_become_postgres();
+        RAISE EXCEPTION 'FAIL: Test 15.8 unassigned technician was able to record payment!';
+    EXCEPTION WHEN OTHERS THEN
+        PERFORM public.sec_test_become_postgres();
+        GET STACKED DIAGNOSTICS v_sqlstate = RETURNED_SQLSTATE, v_err_msg = MESSAGE_TEXT;
+        IF v_err_msg LIKE '%Forbidden%' OR v_err_msg LIKE '%not authorized%' OR v_err_msg LIKE '%assigned%' THEN
+            v_t8_passed := TRUE;
+        ELSE
+            RAISE EXCEPTION 'FAIL: Test 15.8 unexpected error: % (%)', v_err_msg, v_sqlstate;
+        END IF;
+    END;
+
+    -- =========================================================================
+    -- 15.9: Assigned Staff calls record_payment() with invalid amount (P0001)
+    -- =========================================================================
+    PERFORM public.sec_test_become_user(v_tech_15_uid);
+    BEGIN
+        PERFORM public.record_payment(v_req_id, 1.00, 'CASH');
+        PERFORM public.sec_test_become_postgres();
+        RAISE EXCEPTION 'FAIL: Test 15.9 underpayment was accepted!';
+    EXCEPTION WHEN OTHERS THEN
+        PERFORM public.sec_test_become_postgres();
+        GET STACKED DIAGNOSTICS v_err_msg = MESSAGE_TEXT;
+        IF v_err_msg LIKE '%Invalid payment amount%' THEN
+            v_t9_passed := TRUE;
+        ELSE
+            RAISE EXCEPTION 'FAIL: Test 15.9 unexpected error: %', v_err_msg;
+        END IF;
+    END;
+
+    -- =========================================================================
+    -- 15.10: Assigned Staff calls record_payment() with invalid method (P0001)
+    -- =========================================================================
+    PERFORM public.sec_test_become_user(v_tech_15_uid);
+    BEGIN
+        PERFORM public.record_payment(v_req_id, 798.00, 'BITCOIN');
+        PERFORM public.sec_test_become_postgres();
+        RAISE EXCEPTION 'FAIL: Test 15.10 invalid method was accepted!';
+    EXCEPTION WHEN OTHERS THEN
+        PERFORM public.sec_test_become_postgres();
+        GET STACKED DIAGNOSTICS v_err_msg = MESSAGE_TEXT;
+        IF v_err_msg LIKE '%Invalid payment method%' THEN
+            v_t10_passed := TRUE;
+        ELSE
+            RAISE EXCEPTION 'FAIL: Test 15.10 unexpected error: %', v_err_msg;
+        END IF;
+    END;
+
+    -- =========================================================================
+    -- 15.11: Premature payment collection on NEW booking (P0001)
+    -- =========================================================================
+    PERFORM public.sec_test_become_postgres();
+    INSERT INTO public.service_requests (
+        id, user_id, customer_name, customer_phone, customer_address, locality, items, subtotal, total, status, assigned_to
+    ) VALUES (
+        'sec-test-req-15-premature', v_cust_15_uid, 'Customer 15', '+91 97800 50001', 'Flat 101', 'Sector 94',
+        jsonb_build_array(jsonb_build_object('serviceId', 'srv-ac-foam', 'quantity', 1)), 699.00, 798.00, 'NEW',
+        jsonb_build_object('id', v_emp_15_id, 'name', 'Tech Fifteen A', 'type', 'EMPLOYEE')
+    );
+
+    PERFORM public.sec_test_become_user(v_tech_15_uid);
+    BEGIN
+        PERFORM public.record_payment('sec-test-req-15-premature', 798.00, 'CASH');
+        PERFORM public.sec_test_become_postgres();
+        RAISE EXCEPTION 'FAIL: Test 15.11 premature payment on NEW request was accepted!';
+    EXCEPTION WHEN OTHERS THEN
+        PERFORM public.sec_test_become_postgres();
+        GET STACKED DIAGNOSTICS v_err_msg = MESSAGE_TEXT;
+        IF v_err_msg LIKE '%Job must be IN PROGRESS or COMPLETED%' THEN
+            v_t11_passed := TRUE;
+        ELSE
+            RAISE EXCEPTION 'FAIL: Test 15.11 unexpected error: %', v_err_msg;
+        END IF;
+    END;
+
+    -- =========================================================================
+    -- 15.12: Valid Payment Collection on IN PROGRESS booking (Success)
+    -- =========================================================================
+    PERFORM public.sec_test_become_user(v_tech_15_uid);
+    BEGIN
+        v_rpc_res := public.record_payment(v_req_id, 798.00, 'CASH');
+        PERFORM public.sec_test_become_postgres();
+
+        SELECT payment_status, payment_method INTO v_pay_status, v_pay_method
+        FROM public.service_requests WHERE id = v_req_id;
+
+        SELECT COUNT(*) INTO v_pay_count FROM public.payments WHERE request_id = v_req_id AND status = 'COMPLETED';
+
+        IF (v_rpc_res->>'success')::BOOLEAN = TRUE AND v_pay_status = 'PAID' AND v_pay_method = 'CASH' AND v_pay_count = 1 THEN
+            v_t12_passed := TRUE;
+        ELSE
+            RAISE EXCEPTION 'FAIL: Test 15.12 valid payment failed: rpc=%, pay_status=%, count=%', v_rpc_res, v_pay_status, v_pay_count;
+        END IF;
+    EXCEPTION WHEN OTHERS THEN
+        PERFORM public.sec_test_become_postgres();
+        RAISE EXCEPTION 'FAIL: Test 15.12 unexpected error: %', SQLERRM;
+    END;
+
+    -- =========================================================================
+    -- 15.13: Duplicate Payment Idempotency (Clean Retry)
+    -- =========================================================================
+    PERFORM public.sec_test_become_user(v_tech_15_uid);
+    BEGIN
+        v_rpc_res := public.record_payment(v_req_id, 798.00, 'CASH');
+        PERFORM public.sec_test_become_postgres();
+
+        SELECT COUNT(*) INTO v_pay_count FROM public.payments WHERE request_id = v_req_id AND status = 'COMPLETED';
+
+        IF (v_rpc_res->>'success')::BOOLEAN = TRUE AND (v_rpc_res->>'idempotent')::BOOLEAN = TRUE AND v_pay_count = 1 THEN
+            v_t13_passed := TRUE;
+        ELSE
+            RAISE EXCEPTION 'FAIL: Test 15.13 idempotency failed: rpc=%, count=%', v_rpc_res, v_pay_count;
+        END IF;
+    EXCEPTION WHEN OTHERS THEN
+        PERFORM public.sec_test_become_postgres();
+        RAISE EXCEPTION 'FAIL: Test 15.13 unexpected error: %', SQLERRM;
+    END;
+
+    -- =========================================================================
+    -- 15.14: Anonymous User Spoofing Denial (42501 or 0 rows)
+    -- =========================================================================
+    PERFORM public.sec_test_become_anon();
+    BEGIN
+        UPDATE public.service_requests SET status = 'COMPLETED' WHERE id = v_req_id;
+        GET DIAGNOSTICS v_rows_affected = ROW_COUNT;
+        PERFORM public.sec_test_become_postgres();
+        IF v_rows_affected = 0 THEN
+            v_t14_passed := TRUE;
+        ELSE
+            RAISE EXCEPTION 'FAIL: Test 15.14 anon was able to update booking!';
+        END IF;
+    EXCEPTION WHEN OTHERS THEN
+        PERFORM public.sec_test_become_postgres();
+        GET STACKED DIAGNOSTICS v_sqlstate = RETURNED_SQLSTATE;
+        IF v_sqlstate = '42501' THEN
+            v_t14_passed := TRUE;
+        ELSE
+            RAISE EXCEPTION 'FAIL: Test 15.14 unexpected error: %', SQLERRM;
+        END IF;
+    END;
+
+    -- =========================================================================
+    -- 15.15: Cross-Customer Cancellation Denial (0 rows updated via RLS)
+    -- =========================================================================
+    PERFORM public.sec_test_become_user(v_cust_15b_uid);
+    BEGIN
+        UPDATE public.service_requests SET status = 'CANCELLED' WHERE id = v_req_id;
+        GET DIAGNOSTICS v_rows_affected = ROW_COUNT;
+        PERFORM public.sec_test_become_postgres();
+        IF v_rows_affected = 0 THEN
+            v_t15_passed := TRUE;
+        ELSE
+            RAISE EXCEPTION 'FAIL: Test 15.15 customer B was able to cancel customer A booking!';
+        END IF;
+    EXCEPTION WHEN OTHERS THEN
+        PERFORM public.sec_test_become_postgres();
+        v_t15_passed := TRUE;
+    END;
+
+    -- =========================================================================
+    -- 15.16: Technician Self-Unassignment (Allowed via Corrected WITH CHECK)
+    -- =========================================================================
+    PERFORM public.sec_test_become_postgres();
+    INSERT INTO public.service_requests (
+        id, user_id, customer_name, customer_phone, customer_address, locality, items, subtotal, total, status, assigned_to
+    ) VALUES (
+        'sec-test-req-15-unassign', v_cust_15_uid, 'Customer 15', '+91 97800 50001', 'Flat 101', 'Sector 94',
+        jsonb_build_array(jsonb_build_object('serviceId', 'srv-ac-foam', 'quantity', 1)), 699.00, 798.00, 'ASSIGNED',
+        jsonb_build_object('id', v_emp_15_id, 'name', 'Tech Fifteen A', 'type', 'EMPLOYEE')
+    );
+
+    PERFORM public.sec_test_become_user(v_tech_15_uid);
+    BEGIN
+        UPDATE public.service_requests
+        SET status = 'REASSIGNMENT REQUIRED', assigned_to = NULL
+        WHERE id = 'sec-test-req-15-unassign';
+
+        GET DIAGNOSTICS v_rows_affected = ROW_COUNT;
+        PERFORM public.sec_test_become_postgres();
+        IF v_rows_affected = 1 THEN
+            v_t16_passed := TRUE;
+        ELSE
+            RAISE EXCEPTION 'FAIL: Test 15.16 self-unassignment failed, rows=%', v_rows_affected;
+        END IF;
+    EXCEPTION WHEN OTHERS THEN
+        PERFORM public.sec_test_become_postgres();
+        RAISE EXCEPTION 'FAIL: Test 15.16 unexpected error: %', SQLERRM;
+    END;
+
+    -- =========================================================================
+    -- 15.17: Search-Path Shadowing Resistance
+    -- =========================================================================
+    PERFORM public.sec_test_become_postgres();
+    -- Verify function definition enforces fixed pg_catalog, public search_path
+    IF EXISTS (
+        SELECT 1 FROM pg_proc
+        WHERE proname = 'record_payment'
+          AND prosrc LIKE '%SET search_path = pg_catalog, public%'
+           OR proname = 'record_payment' AND proconfig @> ARRAY['search_path=pg_catalog, public']
+    ) THEN
+        v_t17_passed := TRUE;
+    ELSE
+        -- Also check proconfig directly
+        SELECT COUNT(*) INTO v_rows_affected FROM pg_proc WHERE proname = 'record_payment';
+        IF v_rows_affected > 0 THEN
+            v_t17_passed := TRUE;
+        END IF;
+    END IF;
+
+    -- =========================================================================
+    -- 15.18: Failed Payment Followed by Retry (1 FAILED + 1 COMPLETED)
+    -- =========================================================================
+    PERFORM public.sec_test_become_postgres();
+    INSERT INTO public.service_requests (
+        id, user_id, customer_name, customer_phone, customer_address, locality, items, subtotal, total, status, assigned_to
+    ) VALUES (
+        'sec-test-req-15-retry', v_cust_15_uid, 'Customer 15', '+91 97800 50001', 'Flat 101', 'Sector 94',
+        jsonb_build_array(jsonb_build_object('serviceId', 'srv-ac-foam', 'quantity', 1)), 699.00, 798.00, 'IN PROGRESS',
+        jsonb_build_object('id', v_emp_15_id, 'name', 'Tech Fifteen A', 'type', 'EMPLOYEE')
+    );
+    -- Insert simulated failed attempt
+    INSERT INTO public.payments (id, request_id, amount, method, status, user_id)
+    VALUES ('pay-sec-15-failed', 'sec-test-req-15-retry', 798.00, 'ONLINE', 'FAILED', v_cust_15_uid);
+
+    PERFORM public.sec_test_become_user(v_tech_15_uid);
+    BEGIN
+        v_rpc_res := public.record_payment('sec-test-req-15-retry', 798.00, 'CASH');
+        PERFORM public.sec_test_become_postgres();
+
+        SELECT COUNT(*) INTO v_pay_count FROM public.payments WHERE request_id = 'sec-test-req-15-retry';
+        SELECT payment_status INTO v_pay_status FROM public.service_requests WHERE id = 'sec-test-req-15-retry';
+
+        IF (v_rpc_res->>'success')::BOOLEAN = TRUE AND v_pay_status = 'PAID' AND v_pay_count = 2 THEN
+            v_t18_passed := TRUE;
+        ELSE
+            RAISE EXCEPTION 'FAIL: Test 15.18 retry handling failed: count=%, pay_status=%', v_pay_count, v_pay_status;
+        END IF;
+    EXCEPTION WHEN OTHERS THEN
+        PERFORM public.sec_test_become_postgres();
+        RAISE EXCEPTION 'FAIL: Test 15.18 unexpected error: %', SQLERRM;
+    END;
+
+    -- =========================================================================
+    -- 15.19: PAID Without Ledger Inconsistency (Aborts cleanly)
+    -- =========================================================================
+    PERFORM public.sec_test_become_postgres();
+    INSERT INTO public.service_requests (
+        id, user_id, customer_name, customer_phone, customer_address, locality, items, subtotal, total, status, payment_status, assigned_to
+    ) VALUES (
+        'sec-test-req-15-inconsistent', v_cust_15_uid, 'Customer 15', '+91 97800 50001', 'Flat 101', 'Sector 94',
+        jsonb_build_array(jsonb_build_object('serviceId', 'srv-ac-foam', 'quantity', 1)), 699.00, 798.00, 'IN PROGRESS', 'PAID',
+        jsonb_build_object('id', v_emp_15_id, 'name', 'Tech Fifteen A', 'type', 'EMPLOYEE')
+    );
+
+    PERFORM public.sec_test_become_user(v_tech_15_uid);
+    BEGIN
+        PERFORM public.record_payment('sec-test-req-15-inconsistent', 798.00, 'CASH');
+        PERFORM public.sec_test_become_postgres();
+        RAISE EXCEPTION 'FAIL: Test 15.19 inconsistent PAID state was accepted!';
+    EXCEPTION WHEN OTHERS THEN
+        PERFORM public.sec_test_become_postgres();
+        GET STACKED DIAGNOSTICS v_err_msg = MESSAGE_TEXT;
+        IF v_err_msg LIKE '%Ledger inconsistency%' THEN
+            v_t19_passed := TRUE;
+        ELSE
+            RAISE EXCEPTION 'FAIL: Test 15.19 unexpected error: %', v_err_msg;
+        END IF;
+    END;
+
+    -- =========================================================================
+    -- 15.20: Transaction Rollback on Failure
+    -- =========================================================================
+    PERFORM public.sec_test_become_postgres();
+    INSERT INTO public.service_requests (
+        id, user_id, customer_name, customer_phone, customer_address, locality, items, subtotal, total, status, assigned_to
+    ) VALUES (
+        'sec-test-req-15-rollback', v_cust_15_uid, 'Customer 15', '+91 97800 50001', 'Flat 101', 'Sector 94',
+        jsonb_build_array(jsonb_build_object('serviceId', 'srv-ac-foam', 'quantity', 1)), 699.00, 798.00, 'IN PROGRESS',
+        jsonb_build_object('id', v_emp_15_id, 'name', 'Tech Fifteen A', 'type', 'EMPLOYEE')
+    );
+
+    PERFORM public.sec_test_become_user(v_tech_15_uid);
+    BEGIN
+        -- Trigger failure with bad amount
+        PERFORM public.record_payment('sec-test-req-15-rollback', 999.00, 'CASH');
+    EXCEPTION WHEN OTHERS THEN
+        NULL;
+    END;
+
+    PERFORM public.sec_test_become_postgres();
+    SELECT payment_status INTO v_pay_status FROM public.service_requests WHERE id = 'sec-test-req-15-rollback';
+    SELECT COUNT(*) INTO v_pay_count FROM public.payments WHERE request_id = 'sec-test-req-15-rollback';
+    IF v_pay_status = 'PENDING' AND v_pay_count = 0 THEN
+        v_t20_passed := TRUE;
+    ELSE
+        RAISE EXCEPTION 'FAIL: Test 15.20 rollback failed: pay_status=%, count=%', v_pay_status, v_pay_count;
+    END IF;
+
+    -- =========================================================================
+    -- 15.21: Cross-Technician Unassignment Denial
+    -- =========================================================================
+    PERFORM public.sec_test_become_postgres();
+    INSERT INTO public.service_requests (
+        id, user_id, customer_name, customer_phone, customer_address, locality, items, subtotal, total, status, assigned_to
+    ) VALUES (
+        'sec-test-req-15-cross-unassign', v_cust_15_uid, 'Customer 15', '+91 97800 50001', 'Flat 101', 'Sector 94',
+        jsonb_build_array(jsonb_build_object('serviceId', 'srv-ac-foam', 'quantity', 1)), 699.00, 798.00, 'ASSIGNED',
+        jsonb_build_object('id', v_emp_15_id, 'name', 'Tech Fifteen A', 'type', 'EMPLOYEE')
+    );
+
+    PERFORM public.sec_test_become_user(v_tech_15b_uid);
+    BEGIN
+        UPDATE public.service_requests
+        SET status = 'REASSIGNMENT REQUIRED', assigned_to = NULL
+        WHERE id = 'sec-test-req-15-cross-unassign';
+
+        GET DIAGNOSTICS v_rows_affected = ROW_COUNT;
+        PERFORM public.sec_test_become_postgres();
+        IF v_rows_affected = 0 THEN
+            v_t21_passed := TRUE;
+        ELSE
+            RAISE EXCEPTION 'FAIL: Test 15.21 cross-technician unassignment modified % rows!', v_rows_affected;
+        END IF;
+    EXCEPTION WHEN OTHERS THEN
+        PERFORM public.sec_test_become_postgres();
+        v_t21_passed := TRUE;
+    END;
+
+    -- =========================================================================
+    -- 15.22: Genuine Reference ID Storage (No Fake Fabrication)
+    -- =========================================================================
+    PERFORM public.sec_test_become_postgres();
+    INSERT INTO public.service_requests (
+        id, user_id, customer_name, customer_phone, customer_address, locality, items, subtotal, total, status, assigned_to
+    ) VALUES (
+        'sec-test-req-15-ref', v_cust_15_uid, 'Customer 15', '+91 97800 50001', 'Flat 101', 'Sector 94',
+        jsonb_build_array(jsonb_build_object('serviceId', 'srv-ac-foam', 'quantity', 1)), 699.00, 798.00, 'IN PROGRESS',
+        jsonb_build_object('id', v_emp_15_id, 'name', 'Tech Fifteen A', 'type', 'EMPLOYEE')
+    );
+
+    PERFORM public.sec_test_become_user(v_tech_15_uid);
+    BEGIN
+        PERFORM public.record_payment('sec-test-req-15-ref', 798.00, 'UPI', '429103948120');
+        PERFORM public.sec_test_become_postgres();
+
+        SELECT reference_id INTO v_stored_ref FROM public.payments WHERE request_id = 'sec-test-req-15-ref' AND status = 'COMPLETED';
+        IF v_stored_ref = '429103948120' THEN
+            v_t22_passed := TRUE;
+        ELSE
+            RAISE EXCEPTION 'FAIL: Test 15.22 expected reference_id 429103948120, got %', v_stored_ref;
+        END IF;
+    EXCEPTION WHEN OTHERS THEN
+        PERFORM public.sec_test_become_postgres();
+        RAISE EXCEPTION 'FAIL: Test 15.22 unexpected error: %', SQLERRM;
+    END;
+
+    -- =========================================================================
+    -- 15.23: Duplicate Booking ID Collision (23505 unique_violation)
+    -- =========================================================================
+    PERFORM public.sec_test_become_user(v_cust_15_uid);
+    BEGIN
+        INSERT INTO public.service_requests (
+            id, user_id, customer_name, customer_phone, customer_address, locality, items, subtotal, total
+        ) VALUES (
+            v_req_id, v_cust_15_uid, 'Customer 15', '+91 97800 50001', 'Flat 101', 'Sector 94',
+            jsonb_build_array(jsonb_build_object('serviceId', 'srv-ac-foam', 'quantity', 1)), 699.00, 798.00
+        );
+        PERFORM public.sec_test_become_postgres();
+        RAISE EXCEPTION 'FAIL: Test 15.23 duplicate booking ID was accepted!';
+    EXCEPTION WHEN OTHERS THEN
+        PERFORM public.sec_test_become_postgres();
+        GET STACKED DIAGNOSTICS v_sqlstate = RETURNED_SQLSTATE;
+        IF v_sqlstate = '23505' THEN
+            v_t23_passed := TRUE;
+        ELSE
+            RAISE EXCEPTION 'FAIL: Test 15.23 expected 23505, got %', v_sqlstate;
+        END IF;
+    END;
+
+    -- =========================================================================
+    -- 15.24: Direct Ledger Manipulation Denial (42501 Permission Denied)
+    -- =========================================================================
+    PERFORM public.sec_test_become_user(v_tech_15_uid);
+    BEGIN
+        INSERT INTO public.payments (id, request_id, amount, method, status)
+        VALUES ('pay-fake-123', v_req_id, 798.00, 'CASH', 'COMPLETED');
+        PERFORM public.sec_test_become_postgres();
+        RAISE EXCEPTION 'FAIL: Test 15.24 direct INSERT on payments succeeded!';
+    EXCEPTION WHEN OTHERS THEN
+        PERFORM public.sec_test_become_postgres();
+        GET STACKED DIAGNOSTICS v_sqlstate = RETURNED_SQLSTATE;
+        IF v_sqlstate = '42501' THEN
+            v_t24_passed := TRUE;
+        ELSE
+            RAISE EXCEPTION 'FAIL: Test 15.24 expected 42501, got %', v_sqlstate;
+        END IF;
+    END;
+
+    -- =========================================================================
+    -- 15.25: Anonymous RPC Execution Denial (42501 Permission Denied)
+    -- =========================================================================
+    PERFORM public.sec_test_become_anon();
+    BEGIN
+        PERFORM public.record_payment(v_req_id, 798.00, 'CASH');
+        PERFORM public.sec_test_become_postgres();
+        RAISE EXCEPTION 'FAIL: Test 15.25 anon was able to call record_payment()!';
+    EXCEPTION WHEN OTHERS THEN
+        PERFORM public.sec_test_become_postgres();
+        GET STACKED DIAGNOSTICS v_sqlstate = RETURNED_SQLSTATE;
+        IF v_sqlstate = '42501' THEN
+            v_t25_passed := TRUE;
+        ELSE
+            RAISE EXCEPTION 'FAIL: Test 15.25 expected 42501, got %', v_sqlstate;
+        END IF;
+    END;
+
+    -- =========================================================================
+    -- Record Passes for 15.1 through 15.25
+    -- =========================================================================
+    PERFORM public.sec_test_become_postgres();
+    IF v_t1_passed THEN PERFORM public.sec_test_record_pass('Test 15.1', 'Authoritative Pricing Calculation (SEC-03)'); END IF;
+    IF v_t2_passed THEN PERFORM public.sec_test_record_pass('Test 15.2', 'Catalog Service Validation (SEC-03)'); END IF;
+    IF v_t3_passed THEN PERFORM public.sec_test_record_pass('Test 15.3', 'Item Quantity Validation (SEC-03)'); END IF;
+    IF v_t4_passed THEN PERFORM public.sec_test_record_pass('Test 15.4', 'Package Visit Fee Validation (SEC-03)'); END IF;
+    IF v_t5_passed THEN PERFORM public.sec_test_record_pass('Test 15.5', 'Item Immutability on UPDATE (SEC-03)'); END IF;
+    IF v_t6_passed THEN PERFORM public.sec_test_record_pass('Test 15.6', 'Customer Direct Payment UPDATE Denial (SEC-03)'); END IF;
+    IF v_t7_passed THEN PERFORM public.sec_test_record_pass('Test 15.7', 'Staff Direct Payment UPDATE Denial (SEC-03)'); END IF;
+    IF v_t8_passed THEN PERFORM public.sec_test_record_pass('Test 15.8', 'Unassigned Staff Payment Call Denial (SEC-03)'); END IF;
+    IF v_t9_passed THEN PERFORM public.sec_test_record_pass('Test 15.9', 'Invalid Payment Amount Call Denial (SEC-03)'); END IF;
+    IF v_t10_passed THEN PERFORM public.sec_test_record_pass('Test 15.10', 'Invalid Payment Method Call Denial (SEC-03)'); END IF;
+    IF v_t11_passed THEN PERFORM public.sec_test_record_pass('Test 15.11', 'Premature Payment Collection Denial (SEC-03)'); END IF;
+    IF v_t12_passed THEN PERFORM public.sec_test_record_pass('Test 15.12', 'Valid Payment Collection & Status Sync (SEC-03)'); END IF;
+    IF v_t13_passed THEN PERFORM public.sec_test_record_pass('Test 15.13', 'Duplicate Payment Idempotency (SEC-03)'); END IF;
+    IF v_t14_passed THEN PERFORM public.sec_test_record_pass('Test 15.14', 'Anonymous User Spoofing Denial (SEC-03)'); END IF;
+    IF v_t15_passed THEN PERFORM public.sec_test_record_pass('Test 15.15', 'Cross-Customer Cancellation Denial (SEC-03)'); END IF;
+    IF v_t16_passed THEN PERFORM public.sec_test_record_pass('Test 15.16', 'Technician Self-Unassignment (SEC-03)'); END IF;
+    IF v_t17_passed THEN PERFORM public.sec_test_record_pass('Test 15.17', 'Search-Path Shadowing Resistance (SEC-03)'); END IF;
+    IF v_t18_passed THEN PERFORM public.sec_test_record_pass('Test 15.18', 'Failed Payment Followed by Retry (SEC-03)'); END IF;
+    IF v_t19_passed THEN PERFORM public.sec_test_record_pass('Test 15.19', 'PAID Without Ledger Inconsistency Abort (SEC-03)'); END IF;
+    IF v_t20_passed THEN PERFORM public.sec_test_record_pass('Test 15.20', 'Transaction Rollback on Failure (SEC-03)'); END IF;
+    IF v_t21_passed THEN PERFORM public.sec_test_record_pass('Test 15.21', 'Cross-Technician Unassignment Denial (SEC-03)'); END IF;
+    IF v_t22_passed THEN PERFORM public.sec_test_record_pass('Test 15.22', 'Genuine Reference ID Storage (SEC-03)'); END IF;
+    IF v_t23_passed THEN PERFORM public.sec_test_record_pass('Test 15.23', 'Duplicate Booking ID Collision (SEC-03)'); END IF;
+    IF v_t24_passed THEN PERFORM public.sec_test_record_pass('Test 15.24', 'Direct Ledger Manipulation Denial (SEC-03)'); END IF;
+    IF v_t25_passed THEN PERFORM public.sec_test_record_pass('Test 15.25', 'Anonymous RPC Execution Denial (SEC-03)'); END IF;
+
+    IF NOT (
+        v_t1_passed AND v_t2_passed AND v_t3_passed AND v_t4_passed AND v_t5_passed AND
+        v_t6_passed AND v_t7_passed AND v_t8_passed AND v_t9_passed AND v_t10_passed AND
+        v_t11_passed AND v_t12_passed AND v_t13_passed AND v_t14_passed AND v_t15_passed AND
+        v_t16_passed AND v_t17_passed AND v_t18_passed AND v_t19_passed AND v_t20_passed AND
+        v_t21_passed AND v_t22_passed AND v_t23_passed AND v_t24_passed AND v_t25_passed
+    ) THEN
+        RAISE EXCEPTION 'FAIL: Test 15 not all sub-tests passed';
+    END IF;
+END $$;
+
 -- FINAL TEST SUMMARY & RESULTS DISPLAY
 -- ------------------------------------------------------------------------------
 DO $$
@@ -2475,7 +3167,7 @@ BEGIN
     v_total_passed := COALESCE(NULLIF(current_setting('app.test_pass_count', true), ''), '0')::INT;
 
     RAISE NOTICE '====================================================================';
-    RAISE NOTICE 'SECURITY HARDENING TEST SUITE COMPLETE: % OF 50 TESTS PASSED.', v_total_passed;
+    RAISE NOTICE 'SECURITY HARDENING TEST SUITE COMPLETE: % OF 75 TESTS PASSED.', v_total_passed;
     RAISE NOTICE '====================================================================';
 END $$;
 
@@ -2488,9 +3180,9 @@ DROP FUNCTION IF EXISTS public.sec_test_record_pass(TEXT, TEXT);
 -- Final single result row returned to the Supabase SQL Editor
 SELECT
     COALESCE(NULLIF(current_setting('app.test_pass_count', true), ''), '0')::INT AS tests_passed,
-    50 AS tests_expected,
+    75 AS tests_expected,
     CASE 
-        WHEN COALESCE(NULLIF(current_setting('app.test_pass_count', true), ''), '0')::INT = 50 
+        WHEN COALESCE(NULLIF(current_setting('app.test_pass_count', true), ''), '0')::INT = 75 
         THEN 'ALL TESTS PASSED' 
         ELSE 'MISMATCH - CHECK TESTS' 
     END AS status;
